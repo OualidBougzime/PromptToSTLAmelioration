@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # Ollama pour LLM local
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+
+  # CadQuery Server Python
+  cadquery:
+    build: ./python/cadquery-server
+    ports:
+      - "8788:8788"
+    volumes:
+      - ./temp:/app/temp
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  # Redis pour cache
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # MongoDB pour knowledge base
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=secret
+      - MONGO_INITDB_DATABASE=cadam-x
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  ollama_data:
+  redis_data:
+  mongo_data:
