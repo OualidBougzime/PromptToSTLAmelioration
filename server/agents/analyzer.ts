@@ -1,222 +1,256 @@
-// server/agents/analyzer.ts - Agent Analyseur
+ï»¿// server/agents/analyzer.ts - ANALYSEUR GÃ‰OMÃ‰TRIQUE COMPLET
 import { EventEmitter } from 'events'
 import { NLPProcessor } from '../nlp/processor'
 import { DomainClassifier } from '../ml/classifier'
 
 export class AnalyzerAgent extends EventEmitter {
-    private nlp = new NLPProcessor()
-    private classifier = new DomainClassifier()
+    private nlp: NLPProcessor
+    private classifier: DomainClassifier
 
-    async analyze(prompt: string, context: any): Promise<any> {
+    constructor() {
+        super()
+        this.nlp = new NLPProcessor()
+        this.classifier = new DomainClassifier()
+    }
+
+    async analyze(prompt: string, context: any = {}): Promise<any> {
         this.emit('state', { status: 'analyzing', progress: 0 })
 
-        // 1. Analyse NLP du prompt
-        const nlpAnalysis = await this.nlp.process(prompt)
+        // 1. Analyse NLP complÃ¨te
+        const nlpResult = await this.nlp.process(prompt)
         this.emit('state', { status: 'analyzing', progress: 25 })
 
         // 2. Classification du domaine
         const domain = await this.classifier.classify(prompt)
         this.emit('state', { status: 'analyzing', progress: 50 })
 
-        // 3. Extraction des entités
-        const entities = this.extractEntities(nlpAnalysis)
+        // 3. DÃ©composition gÃ©omÃ©trique
+        const geometry = this.decomposeGeometry(nlpResult)
         this.emit('state', { status: 'analyzing', progress: 75 })
 
-        // 4. Détection des contraintes
-        const constraints = this.detectConstraints(prompt, nlpAnalysis)
+        // 4. Analyse des contraintes
+        const constraints = this.extractConstraints(nlpResult, geometry)
+        this.emit('state', { status: 'analyzing', progress: 90 })
 
-        // 5. Évaluation de la complexité
-        const complexity = this.evaluateComplexity(entities, constraints)
+        const result = {
+            prompt,
+            nlp: nlpResult,
+            domain,
+            geometry,
+            constraints,
+            complexity: this.assessComplexity(geometry, constraints),
+            recommendations: this.generateRecommendations(geometry, domain)
+        }
 
         this.emit('state', { status: 'complete', progress: 100 })
-
-        return {
-            intent: nlpAnalysis.intent,
-            domain: domain.category,
-            confidence: domain.confidence,
-            entities,
-            constraints,
-            complexity,
-            parameters: this.extractParameters(entities),
-            features: this.identifyFeatures(nlpAnalysis),
-            references: this.findReferences(prompt)
-        }
+        return result
     }
 
-    private extractEntities(analysis: any): any {
-        const entities = {
-            objects: [],
-            dimensions: [],
-            materials: [],
-            operations: [],
-            properties: []
+    private decomposeGeometry(nlpResult: any): any {
+        const { shapes, operations, features, dimensions } = nlpResult
+
+        // Construire l'arbre gÃ©omÃ©trique
+        const geometryTree = {
+            root: null as any,
+            operations: [] as any[],
+            features: [] as any[]
         }
 
-        // Extraction des objets (gear, bracket, housing, etc.)
-        const objectPatterns = [
-            /(?:create|make|design|build)\s+(?:a|an)?\s*(\w+)/gi,
-            /(\w+)\s+with\s+/gi,
-            /(\w+)\s+(?:that|which)\s+/gi
-        ]
-
-        // Extraction des dimensions
-        const dimensionPatterns = [
-            /(\d+(?:\.\d+)?)\s*(?:mm|cm|m|inch|inches|ft|feet)/gi,
-            /(\d+)\s*x\s*(\d+)(?:\s*x\s*(\d+))?/gi,
-            /diameter\s+(?:of\s+)?(\d+)/gi,
-            /radius\s+(?:of\s+)?(\d+)/gi
-        ]
-
-        // Extraction des matériaux
-        const materialPatterns = [
-            /(?:in|from|using|with)\s+(steel|aluminum|plastic|wood|titanium|carbon fiber)/gi,
-            /(\w+)\s+material/gi
-        ]
-
-        // Appliquer les patterns
-        for (const pattern of objectPatterns) {
-            const matches = [...analysis.text.matchAll(pattern)]
-            entities.objects.push(...matches.map(m => m[1]))
+        // 1. Identifier la forme principale (premiÃ¨re ou plus grande)
+        if (shapes.length > 0) {
+            const mainShape = shapes[0]
+            geometryTree.root = {
+                type: mainShape.type,
+                params: this.inferParameters(mainShape.type, dimensions),
+                confidence: mainShape.confidence
+            }
         }
 
-        for (const pattern of dimensionPatterns) {
-            const matches = [...analysis.text.matchAll(pattern)]
-            entities.dimensions.push(...matches.map(m => ({
-                value: parseFloat(m[1]),
-                unit: m[2] || 'mm',
-                context: m[0]
-            })))
+        // 2. Identifier les opÃ©rations secondaires
+        if (shapes.length > 1) {
+            for (let i = 1; i < shapes.length; i++) {
+                const operation = this.inferOperation(shapes[i], operations)
+                geometryTree.operations.push({
+                    type: operation,
+                    shape: shapes[i].type,
+                    params: this.inferParameters(shapes[i].type, dimensions, i)
+                })
+            }
         }
 
-        return entities
+        // 3. Ajouter les features
+        geometryTree.features = features.map(f => ({
+            type: f.type,
+            params: f.params || this.inferFeatureParams(f.type, dimensions),
+            location: this.inferFeatureLocation(f)
+        }))
+
+        return geometryTree
     }
 
-    private detectConstraints(prompt: string, analysis: any): any {
-        const constraints = {
-            geometric: [],
+    private inferParameters(shapeType: string, dimensions: any, index: number = 0): any {
+        const params: any = {}
+        const dims = dimensions.values || []
+
+        switch (shapeType) {
+            case 'box':
+                params.width = dims[index * 3] || dimensions.width || 10
+                params.height = dims[index * 3 + 1] || dimensions.height || 10
+                params.depth = dims[index * 3 + 2] || dimensions.depth || 10
+                break
+
+            case 'cylinder':
+                params.radius = dimensions.diameter ? dimensions.diameter / 2 : (dims[index * 2] || 5)
+                params.height = dims[index * 2 + 1] || 10
+                break
+
+            case 'sphere':
+                params.radius = dimensions.diameter ? dimensions.diameter / 2 : (dims[index] || 5)
+                break
+
+            case 'cone':
+                params.radius = dims[index * 2] || 5
+                params.height = dims[index * 2 + 1] || 10
+                break
+
+            case 'torus':
+                params.majorRadius = dims[index * 2] || 10
+                params.minorRadius = dims[index * 2 + 1] || 2
+                break
+        }
+
+        return params
+    }
+
+    private inferOperation(shape: any, operations: string[]): string {
+        // Si "hole" ou "cut" dans le contexte â†’ subtract
+        if (shape.context && (shape.context.includes('hole') || shape.context.includes('cut'))) {
+            return 'subtract'
+        }
+
+        // Si opÃ©rations dÃ©tectÃ©es
+        if (operations.includes('subtract')) return 'subtract'
+        if (operations.includes('union')) return 'union'
+        if (operations.includes('intersect')) return 'intersect'
+
+        // Par dÃ©faut â†’ union
+        return 'union'
+    }
+
+    private inferFeatureParams(featureType: string, dimensions: any): any {
+        const params: any = {}
+        const dims = dimensions.values || []
+
+        switch (featureType) {
+            case 'fillet':
+            case 'chamfer':
+                params.radius = dims.find(d => d < 5) || 1
+                break
+
+            case 'hole':
+                params.diameter = dims.find(d => d < 10) || 3
+                params.depth = dims.find(d => d > 5) || 10
+                break
+
+            case 'thread':
+                params.pitch = 1.5
+                params.diameter = dims.find(d => d < 20) || 6
+                break
+        }
+
+        return params
+    }
+
+    private inferFeatureLocation(feature: any): string {
+        const context = feature.context?.toLowerCase() || ''
+
+        if (context.includes('top') || context.includes('above')) return 'top'
+        if (context.includes('bottom') || context.includes('below')) return 'bottom'
+        if (context.includes('side')) return 'side'
+        if (context.includes('center') || context.includes('middle')) return 'center'
+
+        return 'all' // Par dÃ©faut, partout
+    }
+
+    private extractConstraints(nlpResult: any, geometry: any): any {
+        const constraints: any = {
             manufacturing: [],
             functional: [],
-            aesthetic: []
+            dimensional: []
         }
 
-        // Contraintes géométriques
-        if (prompt.includes('parallel')) constraints.geometric.push('parallel')
-        if (prompt.includes('perpendicular')) constraints.geometric.push('perpendicular')
-        if (prompt.includes('concentric')) constraints.geometric.push('concentric')
-        if (prompt.includes('tangent')) constraints.geometric.push('tangent')
-
         // Contraintes de fabrication
-        if (prompt.match(/3d print/i)) constraints.manufacturing.push('3d-printable')
-        if (prompt.match(/cnc|machin/i)) constraints.manufacturing.push('machinable')
-        if (prompt.match(/inject|mold/i)) constraints.manufacturing.push('injection-moldable')
+        if (nlpResult.text.toLowerCase().includes('3d print')) {
+            constraints.manufacturing.push({
+                type: 'additive',
+                method: '3d-printing',
+                minWallThickness: 1.5,
+                maxOverhang: 45
+            })
+        }
+
+        // Contraintes dimensionnelles
+        if (nlpResult.dimensions.values) {
+            constraints.dimensional.push({
+                type: 'explicit',
+                values: nlpResult.dimensions
+            })
+        }
 
         // Contraintes fonctionnelles
-        if (prompt.match(/support.*kg|weight/i)) {
-            const match = prompt.match(/(\d+)\s*kg/i)
+        if (nlpResult.features.some(f => f.type === 'thread')) {
             constraints.functional.push({
-                type: 'load-bearing',
-                value: match ? parseFloat(match[1]) : null
+                type: 'mechanical',
+                feature: 'threading',
+                standard: 'ISO'
             })
         }
 
         return constraints
     }
 
-    private evaluateComplexity(entities: any, constraints: any): number {
-        let complexity = 0.3 // Base
+    private assessComplexity(geometry: any, constraints: any): any {
+        let score = 1 // Base
 
-        // Plus d'objets = plus complexe
-        complexity += entities.objects.length * 0.1
+        // +1 par forme
+        score += geometry.root ? 1 : 0
+        score += geometry.operations.length
 
-        // Plus de dimensions = plus de précision requise
-        complexity += entities.dimensions.length * 0.05
+        // +2 par feature
+        score += geometry.features.length * 2
 
-        // Contraintes augmentent la complexité
-        complexity += constraints.geometric.length * 0.1
-        complexity += constraints.manufacturing.length * 0.15
-        complexity += constraints.functional.length * 0.2
+        // +1 par contrainte
+        score += Object.values(constraints).flat().length
 
-        // Matériaux spéciaux
-        if (entities.materials.some(m => ['titanium', 'carbon fiber'].includes(m))) {
-            complexity += 0.2
-        }
-
-        return Math.min(1, complexity)
-    }
-
-    private extractParameters(entities: any): any {
-        const params = {}
-
-        // Convertir les dimensions en paramètres
-        entities.dimensions.forEach((dim, idx) => {
-            const name = dim.context.includes('diameter') ? 'diameter' :
-                dim.context.includes('radius') ? 'radius' :
-                    dim.context.includes('height') ? 'height' :
-                        dim.context.includes('width') ? 'width' :
-                            dim.context.includes('length') ? 'length' :
-                                `dimension${idx + 1}`
-
-            params[name] = {
-                value: dim.value,
-                unit: dim.unit,
-                min: dim.value * 0.5,
-                max: dim.value * 2,
-                step: dim.value > 10 ? 1 : 0.1
-            }
-        })
-
-        return params
-    }
-
-    private identifyFeatures(analysis: any): string[] {
-        const features = []
-
-        const featureKeywords = {
-            'holes': ['hole', 'mounting', 'bore'],
-            'threads': ['thread', 'screw', 'tap'],
-            'chamfers': ['chamfer', 'bevel'],
-            'fillets': ['fillet', 'round', 'radius'],
-            'patterns': ['pattern', 'array', 'repeat'],
-            'ribs': ['rib', 'reinforce', 'strengthen'],
-            'pockets': ['pocket', 'cavity', 'hollow'],
-            'slots': ['slot', 'groove', 'channel']
-        }
-
-        for (const [feature, keywords] of Object.entries(featureKeywords)) {
-            if (keywords.some(kw => analysis.text.toLowerCase().includes(kw))) {
-                features.push(feature)
+        return {
+            score: Math.min(10, score),
+            level: score < 3 ? 'simple' : score < 6 ? 'medium' : 'complex',
+            factors: {
+                shapes: geometry.operations.length + 1,
+                features: geometry.features.length,
+                constraints: Object.values(constraints).flat().length
             }
         }
-
-        return features
     }
 
-    private findReferences(prompt: string): any[] {
-        const references = []
+    private generateRecommendations(geometry: any, domain: any): string[] {
+        const recommendations: string[] = []
 
-        // Détecter les URLs
-        const urlPattern = /https?:\/\/[^\s]+/gi
-        const urls = prompt.match(urlPattern)
-        if (urls) {
-            references.push(...urls.map(url => ({ type: 'url', value: url })))
+        // Recommandations basÃ©es sur le domaine
+        if (domain.category === 'mechanical') {
+            recommendations.push('Consider adding fillets to reduce stress concentration')
+            recommendations.push('Verify tolerance requirements for assembly')
         }
 
-        // Détecter les normes
-        const standardPattern = /(?:ISO|DIN|ANSI|ASME)\s*\d+/gi
-        const standards = prompt.match(standardPattern)
-        if (standards) {
-            references.push(...standards.map(std => ({ type: 'standard', value: std })))
+        // Recommandations basÃ©es sur la gÃ©omÃ©trie
+        if (geometry.features.length === 0) {
+            recommendations.push('Consider adding features like fillets or chamfers')
         }
 
-        return references
-    }
+        if (geometry.operations.some(op => op.type === 'subtract')) {
+            recommendations.push('Ensure proper wall thickness after subtraction')
+        }
 
-    receiveMessage(msg: any): void {
-        // Traiter les messages d'autres agents
-        this.emit('message', {
-            to: msg.from,
-            type: 'response',
-            content: { acknowledged: true }
-        })
+        return recommendations
     }
 }

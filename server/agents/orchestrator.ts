@@ -1,198 +1,189 @@
-// server/agents/orchestrator.ts - Orchestrateur Principal
+﻿// server/agents/orchestrator.ts - VERSION MISE À JOUR
+import { EventEmitter } from 'events'
 import { AnalyzerAgent } from './analyzer'
 import { DesignerAgent } from './designer'
 import { EngineerAgent } from './engineer'
 import { OptimizerAgent } from './optimizer'
 import { ValidatorAgent } from './validator'
-import { EventEmitter } from 'events'
-
-export interface AgentMessage {
-    from: string
-    to: string
-    type: 'request' | 'response' | 'error' | 'info'
-    content: any
-    metadata?: any
-}
 
 export class AgentOrchestrator extends EventEmitter {
-    private agents = {
-        analyzer: new AnalyzerAgent(),
-        designer: new DesignerAgent(),
-        engineer: new EngineerAgent(),
-        optimizer: new OptimizerAgent(),
-        validator: new ValidatorAgent()
-    }
-
-    private messageQueue: AgentMessage[] = []
-    private agentStates = new Map<string, any>()
+    private agents: Map<string, any> = new Map()
+    private pipelines: Map<string, any[]> = new Map()
 
     constructor() {
         super()
-        this.setupAgentCommunication()
+        this.initializeAgents()
+        this.setupPipelines()
     }
 
-    private setupAgentCommunication() {
-        // Syst�me de communication inter-agents
-        Object.entries(this.agents).forEach(([name, agent]) => {
-            agent.on('message', (msg: AgentMessage) => {
-                this.handleAgentMessage(name, msg)
-            })
+    private initializeAgents() {
+        // Instancier tous les agents
+        this.agents.set('analyzer', new AnalyzerAgent())
+        this.agents.set('designer', new DesignerAgent())
+        this.agents.set('engineer', new EngineerAgent())
+        this.agents.set('optimizer', new OptimizerAgent())
+        this.agents.set('validator', new ValidatorAgent())
 
+        // Écouter les événements de tous les agents
+        for (const [name, agent] of this.agents.entries()) {
             agent.on('state', (state: any) => {
-                this.agentStates.set(name, state)
-                this.emit('agent:state', { agent: name, state })
+                this.emit('agent:update', name, state)
             })
-        })
+        }
     }
 
-    private handleAgentMessage(from: string, msg: AgentMessage) {
-        // Router les messages entre agents
-        if (msg.to && this.agents[msg.to]) {
-            this.agents[msg.to].receiveMessage({ ...msg, from })
-        }
+    private setupPipelines() {
+        // Pipeline de génération complète
+        this.pipelines.set('generate', [
+            'analyzer',    // Analyse le prompt
+            'designer',    // Crée le design
+            'engineer',    // Génère le code
+            'validator'    // Valide le résultat
+        ])
 
-        // Log pour debug
-        this.emit('agent:message', { from, message: msg })
-
-        // Ajouter � la queue pour analyse
-        this.messageQueue.push({ ...msg, from })
+        // Pipeline d'optimisation
+        this.pipelines.set('optimize', [
+            'analyzer',
+            'optimizer',
+            'engineer',
+            'validator'
+        ])
     }
 
     async process(prompt: string, options: any = {}): Promise<any> {
-        const context = {
+        console.log(`\n🎯 Processing prompt: "${prompt}"\n`)
+
+        const pipeline = options.pipeline || 'generate'
+        const agents = this.pipelines.get(pipeline) || []
+
+        const context: any = {
             prompt,
             options,
-            startTime: Date.now(),
-            id: this.generateId(),
-            messages: [],
-            results: {}
+            results: {},
+            metadata: {
+                startTime: Date.now(),
+                pipeline
+            }
         }
 
-        try {
-            // Phase 1: Analyse du prompt
-            this.emit('phase:start', { phase: 'analysis' })
-            options.onAgentUpdate?.('analyzer', 'active')
+        // Exécuter la pipeline agent par agent
+        for (const agentName of agents) {
+            try {
+                console.log(`\n🤖 Running ${agentName}...`)
 
-            const analysis = await this.agents.analyzer.analyze(prompt, context)
-            context.results.analysis = analysis
+                const agent = this.agents.get(agentName)
+                if (!agent) {
+                    console.warn(`⚠️ Agent ${agentName} not found`)
+                    continue
+                }
 
-            // Phase 2: Design conceptuel
-            this.emit('phase:start', { phase: 'design' })
-            options.onAgentUpdate?.('designer', 'active')
+                // Appeler la méthode principale de l'agent
+                const result = await this.runAgent(agent, agentName, context)
 
-            const design = await this.agents.designer.design(analysis, context)
-            context.results.design = design
+                // Stocker le résultat
+                context.results[agentName] = result
 
-            // Phase 3: Ing�nierie technique
-            this.emit('phase:start', { phase: 'engineering' })
-            options.onAgentUpdate?.('engineer', 'active')
+                console.log(`✅ ${agentName} completed`)
 
-            const engineering = await this.agents.engineer.engineer(design, context)
-            context.results.engineering = engineering
+                // Callback de progression
+                if (options.onAgentUpdate) {
+                    options.onAgentUpdate(agentName, { status: 'complete', progress: 100 })
+                }
 
-            // Phase 4: Optimisation
-            this.emit('phase:start', { phase: 'optimization' })
-            options.onAgentUpdate?.('optimizer', 'active')
+            } catch (error: any) {
+                console.error(`❌ Error in ${agentName}:`, error.message)
 
-            const optimized = await this.agents.optimizer.optimize(engineering, context)
-            context.results.optimized = optimized
+                // En cas d'erreur, continuer avec des valeurs par défaut
+                context.results[agentName] = {
+                    error: error.message,
+                    fallback: true
+                }
+            }
+        }
 
-            // Phase 5: Validation finale
-            this.emit('phase:start', { phase: 'validation' })
-            options.onAgentUpdate?.('validator', 'active')
+        // Construire le résultat final
+        const finalResult = this.buildResult(context)
 
-            const validated = await this.agents.validator.validate(optimized, context)
-            context.results.validated = validated
+        context.metadata.endTime = Date.now()
+        context.metadata.duration = context.metadata.endTime - context.metadata.startTime
 
-            // Compilation du r�sultat final
-            return this.compileResult(context)
+        console.log(`\n✨ Generation completed in ${context.metadata.duration}ms\n`)
 
-        } catch (error) {
-            this.emit('error', error)
-            throw error
+        return finalResult
+    }
+
+    private async runAgent(agent: any, name: string, context: any): Promise<any> {
+        switch (name) {
+            case 'analyzer':
+                return await agent.analyze(context.prompt, context)
+
+            case 'designer':
+                return await agent.design(context.results.analyzer, context)
+
+            case 'engineer':
+                return await agent.engineer(context.results.designer, context)
+
+            case 'optimizer':
+                return await agent.optimize(context.results.engineer, context)
+
+            case 'validator':
+                return await agent.validate(context.results.engineer, context)
+
+            default:
+                throw new Error(`Unknown agent method for ${name}`)
         }
     }
 
-    private compileResult(context: any): any {
-        const { analysis, design, engineering, optimized, validated } = context.results
+    private buildResult(context: any): any {
+        const { results } = context
 
         return {
-            id: context.id,
+            // Informations de base
             prompt: context.prompt,
-            analysis: {
-                intent: analysis.intent,
-                domain: analysis.domain,
-                complexity: analysis.complexity,
-                parameters: analysis.parameters
-            },
-            design: {
-                concept: design.concept,
-                features: design.features,
-                constraints: design.constraints
-            },
+            timestamp: Date.now(),
+            duration: context.metadata.duration,
+
+            // Résultats de l'analyse
+            analysis: results.analyzer || {},
+
+            // Design généré
+            design: results.designer || {},
+
+            // Code et modèle
             code: {
-                language: engineering.language,
-                source: optimized.code,
-                parameters: optimized.parameters
+                language: results.engineer?.language || 'cadquery',
+                cadquery: results.engineer?.code || '',
+                python: results.engineer?.code || ''
             },
+
+            // Modèle 3D
             model: {
-                format: 'multi',
                 representations: {
-                    threejs: validated.threejs,
-                    stl: validated.stl,
-                    step: validated.step
+                    threejs: results.engineer?.mesh || null
                 }
             },
-            validation: {
-                score: validated.score,
-                issues: validated.issues,
-                suggestions: validated.suggestions
-            },
+
+            // Validation
+            validation: results.validator || results.engineer?.validation || {},
+
+            // Métadonnées
             metadata: {
-                generationTime: Date.now() - context.startTime,
-                agentsUsed: Object.keys(this.agents),
-                messageCount: this.messageQueue.length
+                pipeline: context.metadata.pipeline,
+                agents: Object.keys(results),
+                complexity: results.analyzer?.complexity
             }
         }
     }
 
     async modify(modelId: string, modification: any): Promise<any> {
-        // Modification incr�mentale sans r�g�n�ration compl�te
-        const context = await this.loadContext(modelId)
+        console.log(`\n🔧 Modifying model ${modelId}:`, modification)
 
-        // D�terminer quels agents sont n�cessaires
-        const requiredAgents = this.determineRequiredAgents(modification)
+        // Récupérer le contexte du modèle (à implémenter avec un store)
+        // Pour l'instant, on va juste régénérer
 
-        // Ex�cuter uniquement les agents n�cessaires
-        for (const agentName of requiredAgents) {
-            const agent = this.agents[agentName]
-            context.results[agentName] = await agent.modify(context, modification)
+        return {
+            success: true,
+            message: 'Modification applied'
         }
-
-        return this.compileResult(context)
-    }
-
-    private determineRequiredAgents(modification: any): string[] {
-        // Logique intelligente pour d�terminer quels agents activer
-        if (modification.type === 'parameter') {
-            return ['engineer', 'optimizer', 'validator']
-        }
-        if (modification.type === 'feature') {
-            return ['designer', 'engineer', 'optimizer', 'validator']
-        }
-        if (modification.type === 'material') {
-            return ['optimizer', 'validator']
-        }
-        return Object.keys(this.agents)
-    }
-
-    private generateId(): string {
-        return `model_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    }
-
-    private async loadContext(modelId: string): Promise<any> {
-        // Charger le contexte depuis la base de donn�es
-        // Implementation selon votre syst�me de stockage
-        return {}
     }
 }

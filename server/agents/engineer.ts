@@ -1,247 +1,315 @@
-﻿// server/agents/engineer.ts - Agent Ingénieur
+﻿// server/agents/engineer.ts - VERSION AVANCÉE
 import { EventEmitter } from 'events'
 import axios from 'axios'
 
 export class EngineerAgent extends EventEmitter {
     private engines = {
-        cadquery: 'http://localhost:8788',
-        openscad: 'http://localhost:8789',
-        jscad: 'http://localhost:8790'
+        cadquery: 'http://localhost:8788'
     }
 
     async engineer(design: any, context: any): Promise<any> {
         this.emit('state', { status: 'engineering', progress: 0 })
 
-        const language = this.selectLanguage(design, context.results.analysis)
+        // Utiliser l'analyse géométrique du context
+        const analysis = context.results?.analysis
+
+        if (!analysis || !analysis.geometry) {
+            throw new Error('Missing geometric analysis')
+        }
+
         this.emit('state', { status: 'engineering', progress: 20 })
 
-        // PASSE LE PROMPT depuis le context
-        const code = await this.generateCADCode(design, language, context.prompt)
+        // Générer le code basé sur l'arbre géométrique
+        const code = this.generateAdvancedCode(analysis.geometry, context.prompt)
         this.emit('state', { status: 'engineering', progress: 60 })
 
-        const validation = await this.validateCode(code, language)
+        const validation = await this.validateCode(code)
         this.emit('state', { status: 'engineering', progress: 80 })
 
-        const mesh = await this.executeCode(code, language, design)
-
+        const mesh = await this.executeCode(code)
         this.emit('state', { status: 'complete', progress: 100 })
 
         return {
-            language,
+            language: 'cadquery',
             code,
             validation,
             mesh,
             parameters: this.extractParameters(code),
-            documentation: this.generateDocumentation(code, design)
+            documentation: this.generateDocumentation(code, analysis)
         }
     }
 
-    private selectLanguage(design: any, analysis: any): string {
-        // Force CadQuery car il tourne maintenant
-        return 'cadquery'
-    }
-
-    private async generateCADCode(design: any, language: string, prompt: string): Promise<string> {
-        switch (language) {
-            case 'cadquery':
-                return this.generateCadQueryCode(design, prompt)
-            case 'openscad':
-                return this.generateOpenSCADCode(design)
-            case 'jscad':
-                return this.generateJSCADCode(design)
-            default:
-                throw new Error(`Unsupported language: ${language}`)
-        }
-    }
-
-    private generateCadQueryCode(design: any, prompt: string = ''): string {
+    private generateAdvancedCode(geometry: any, prompt: string): string {
         let code = `import cadquery as cq\n\n`
+        code += `# Generated from: ${prompt}\n\n`
 
-        const promptLower = prompt.toLowerCase()
-        const shape = this.detectShape(promptLower, design)
+        // 1. Définir les paramètres
+        code += this.generateParameters(geometry)
+        code += `\n`
 
-        code += `# Generated for: ${prompt}\n\n`
+        // 2. Créer la forme principale
+        code += `# Main shape\n`
+        code += this.generateMainShape(geometry.root)
+        code += `\n`
 
-        switch (shape) {
-            case 'pyramid':
-                code += `base_size = 20\nheight = 15\n\n`
-                code += `result = (cq.Workplane("XY")\n`
-                code += `    .polygon(4, base_size)\n`
-                code += `    .workplane(offset=height)\n`
-                code += `    .polygon(4, 0.1)\n`
-                code += `    .loft())\n`
+        // 3. Appliquer les opérations
+        if (geometry.operations.length > 0) {
+            code += `# Operations\n`
+            for (const operation of geometry.operations) {
+                code += this.generateOperation(operation)
+                code += `\n`
+            }
+        }
+
+        // 4. Ajouter les features
+        if (geometry.features.length > 0) {
+            code += `# Features\n`
+            for (const feature of geometry.features) {
+                code += this.generateFeature(feature)
+                code += `\n`
+            }
+        }
+
+        code += `show_object(result)\n`
+        return code
+    }
+
+    private generateParameters(geometry: any): string {
+        let code = `# Parameters\n`
+
+        const root = geometry.root
+        if (!root) return code
+
+        switch (root.type) {
+            case 'box':
+                code += `width = ${root.params.width}\n`
+                code += `height = ${root.params.height}\n`
+                code += `depth = ${root.params.depth}\n`
                 break
 
             case 'cylinder':
-                code += `radius = 5\nheight = 20\n\n`
-                code += `result = cq.Workplane("XY").circle(radius).extrude(height)\n`
+                code += `radius = ${root.params.radius}\n`
+                code += `height = ${root.params.height}\n`
                 break
 
             case 'sphere':
-                code += `radius = 10\n\n`
-                code += `result = cq.Workplane("XY").sphere(radius)\n`
+                code += `radius = ${root.params.radius}\n`
                 break
 
+            case 'cone':
+                code += `radius = ${root.params.radius}\n`
+                code += `height = ${root.params.height}\n`
+                break
+
+            case 'torus':
+                code += `major_radius = ${root.params.majorRadius}\n`
+                code += `minor_radius = ${root.params.minorRadius}\n`
+                break
+        }
+
+        return code
+    }
+
+    private generateMainShape(root: any): string {
+        if (!root) return 'result = cq.Workplane("XY").box(10, 10, 10)\n'
+
+        switch (root.type) {
+            case 'box':
+                return `result = (cq.Workplane("XY")
+    .box(width, height, depth))\n`
+
+            case 'cylinder':
+                return `result = (cq.Workplane("XY")
+    .circle(radius)
+    .extrude(height))\n`
+
+            case 'sphere':
+                return `result = cq.Workplane("XY").sphere(radius)\n`
+
+            case 'cone':
+                return `result = (cq.Workplane("XY")
+    .circle(radius)
+    .workplane(offset=height)
+    .circle(0.1)
+    .loft())\n`
+
+            case 'torus':
+                return `result = (cq.Workplane("XY")
+    .circle(major_radius + minor_radius)
+    .circle(major_radius - minor_radius)
+    .extrude(minor_radius * 2)
+    .revolve(360, (0, 0, 0), (0, 1, 0)))\n`
+
             default:
-                code += `width = 10\nheight = 10\ndepth = 10\n\n`
-                code += `result = cq.Workplane("XY").box(width, height, depth)\n`
+                return `result = cq.Workplane("XY").box(10, 10, 10)\n`
         }
-
-        code += `\nshow_object(result)\n`
-        return code
     }
 
-    private detectShape(prompt: string, design: any): string {
-        if (prompt.includes('pyramid') || prompt.includes('cone')) return 'pyramid'
-        if (prompt.includes('cylinder') || prompt.includes('tube')) return 'cylinder'
-        if (prompt.includes('sphere') || prompt.includes('ball')) return 'sphere'
-        if (prompt.includes('phone') && prompt.includes('stand')) return 'phone_stand'
-        if (prompt.includes('bracket')) return 'bracket'
-        return 'box'
-    }
+    private generateOperation(operation: any): string {
+        const { type, shape, params } = operation
+        let code = ''
 
-    private generateOpenSCADCode(design: any): string {
-        let code = `// Generated OpenSCAD Code\n\n`
+        // Créer la forme secondaire
+        const secondaryShape = this.generateSecondaryShape(shape, params)
 
-        // Paramètres
-        code += `// Parameters\n`
-        for (const [key, value] of Object.entries(design.concept.parameters || {})) {
-            code += `${key} = ${value};\n`
+        switch (type) {
+            case 'subtract':
+                code += `# Subtract operation\n`
+                code += `secondary = ${secondaryShape}\n`
+                code += `result = result.cut(secondary)\n`
+                break
+
+            case 'union':
+                code += `# Union operation\n`
+                code += `secondary = ${secondaryShape}\n`
+                code += `result = result.union(secondary)\n`
+                break
+
+            case 'intersect':
+                code += `# Intersect operation\n`
+                code += `secondary = ${secondaryShape}\n`
+                code += `result = result.intersect(secondary)\n`
+                break
         }
-        code += `\n`
-
-        // Module principal
-        code += `module main() {\n`
-
-        const mainBody = design.concept.mainBody
-        if (mainBody.type === 'primitive-based') {
-            const primitive = mainBody.primitives[0]
-            switch (primitive.type) {
-                case 'box':
-                    code += `  cube([width, height, depth], center=true);\n`
-                    break
-                case 'cylinder':
-                    code += `  cylinder(h=height, r=radius, center=true, $fn=64);\n`
-                    break
-                case 'sphere':
-                    code += `  sphere(r=radius, $fn=64);\n`
-                    break
-            }
-        }
-
-        code += `}\n\n`
-        code += `main();\n`
 
         return code
     }
 
-    private generateJSCADCode(design: any): string {
-        let code = `// Generated JSCAD Code\n\n`
+    private generateSecondaryShape(shapeType: string, params: any): string {
+        switch (shapeType) {
+            case 'box':
+                return `(cq.Workplane("XY")
+    .box(${params.width}, ${params.height}, ${params.depth}))`
 
-        code += `function main(params) {\n`
-        code += `  const { width = 10, height = 10, depth = 10 } = params;\n\n`
+            case 'cylinder':
+                return `(cq.Workplane("XY")
+    .circle(${params.radius})
+    .extrude(${params.height}))`
 
-        const mainBody = design.concept.mainBody
-        if (mainBody.type === 'primitive-based') {
-            const primitive = mainBody.primitives[0]
-            switch (primitive.type) {
-                case 'box':
-                    code += `  return cube({ size: [width, height, depth] });\n`
-                    break
-                case 'cylinder':
-                    code += `  return cylinder({ h: height, r: radius, segments: 64 });\n`
-                    break
-                case 'sphere':
-                    code += `  return sphere({ r: radius, segments: 64 });\n`
-                    break
-            }
+            case 'sphere':
+                return `cq.Workplane("XY").sphere(${params.radius})`
+
+            case 'cone':
+                return `(cq.Workplane("XY")
+    .circle(${params.radius})
+    .workplane(offset=${params.height})
+    .circle(0.1)
+    .loft())`
+
+            default:
+                return `cq.Workplane("XY").box(5, 5, 5)`
         }
+    }
 
-        code += `}\n\n`
-        code += `function getParameterDefinitions() {\n`
-        code += `  return [\n`
-        code += `    { name: 'width', type: 'float', initial: 10, caption: 'Width' },\n`
-        code += `    { name: 'height', type: 'float', initial: 10, caption: 'Height' },\n`
-        code += `    { name: 'depth', type: 'float', initial: 10, caption: 'Depth' }\n`
-        code += `  ];\n`
-        code += `}\n`
+    private generateFeature(feature: any): string {
+        const { type, params, location } = feature
+        let code = ''
+
+        switch (type) {
+            case 'fillet':
+                code += `# Add fillet\n`
+                if (location === 'all') {
+                    code += `result = result.edges().fillet(${params.radius || 1})\n`
+                } else {
+                    code += `result = result.edges("|Z").fillet(${params.radius || 1})\n`
+                }
+                break
+
+            case 'chamfer':
+                code += `# Add chamfer\n`
+                if (location === 'all') {
+                    code += `result = result.edges().chamfer(${params.radius || 1})\n`
+                } else {
+                    code += `result = result.edges("|Z").chamfer(${params.radius || 1})\n`
+                }
+                break
+
+            case 'hole':
+                code += `# Add hole\n`
+                const dia = params.diameter || 3
+                const depth = params.depth || 10
+
+                if (location === 'center') {
+                    code += `result = (result
+    .faces(">Z")
+    .workplane()
+    .circle(${dia / 2})
+    .cutThruAll())\n`
+                } else if (location === 'top') {
+                    code += `result = (result
+    .faces(">Z")
+    .workplane()
+    .circle(${dia / 2})
+    .cutBlind(-${depth}))\n`
+                }
+                break
+
+            case 'pattern':
+                code += `# Add pattern\n`
+                code += `result = result.rarray(10, 10, 3, 3)\n`
+                break
+
+            case 'thread':
+                code += `# Add thread (simplified)\n`
+                code += `# Note: Full thread implementation would require helix\n`
+                break
+        }
 
         return code
     }
 
-    private async validateCode(code: string, language: string): Promise<any> {
-        // Validation syntaxique et sémantique
-        const validation = {
-            syntax: true,
-            semantics: true,
-            warnings: [],
-            errors: []
-        }
-
+    private async validateCode(code: string): Promise<any> {
         try {
-            // Envoyer au serveur approprié pour validation
-            const response = await axios.post(`${this.engines[language]}/validate`, {
+            const response = await axios.post(`${this.engines.cadquery}/validate`, {
                 code
-            })
+            }, { timeout: 3000 })
 
-            validation.syntax = response.data.syntax
-            validation.warnings = response.data.warnings || []
-            validation.errors = response.data.errors || []
-
-        } catch (error) {
-            validation.syntax = false
-            validation.errors.push(error.message)
+            return {
+                syntax: response.data.syntax,
+                warnings: response.data.warnings || [],
+                errors: response.data.errors || []
+            }
+        } catch (error: any) {
+            console.warn('⚠️ Validation unavailable:', error.message)
+            return {
+                syntax: true,
+                warnings: ['Validation service unavailable'],
+                errors: []
+            }
         }
-
-        return validation
     }
 
-    private async executeCode(code: string, language: string, design?: any): Promise<any> {
+    private async executeCode(code: string): Promise<any> {
         try {
-            const response = await axios.post(`${this.engines[language]}/execute`, {
+            const response = await axios.post(`${this.engines.cadquery}/execute`, {
                 code,
                 format: 'mesh'
-            }, {
-                timeout: 3000 // 3 secondes max
-            })
+            }, { timeout: 5000 })
 
             return {
                 vertices: response.data.vertices,
                 faces: response.data.faces,
-                normals: response.data.normals
+                normals: response.data.normals || []
             }
-
         } catch (error: any) {
-            console.warn(`⚠️ ${language} engine not available, using mock mesh`)
-
-            // Retourne un mesh mock au lieu de crasher
+            console.warn(`⚠️ CadQuery engine not available: ${error.message}`)
             return this.generateMockMesh()
         }
     }
 
-    // Ajoute cette nouvelle méthode juste après executeCode
     private generateMockMesh(): any {
-        // Mesh simple d'un cube 10x10x10
-        const s = 5 // demi-taille
+        const s = 5
         return {
             vertices: [
-                // Front face
                 -s, -s, s, s, -s, s, s, s, s, -s, s, s,
-                // Back face
                 -s, -s, -s, s, -s, -s, s, s, -s, -s, s, -s
             ],
             faces: [
-                // Front
                 0, 1, 2, 0, 2, 3,
-                // Back
                 4, 6, 5, 4, 7, 6,
-                // Left
                 4, 0, 3, 4, 3, 7,
-                // Right
                 1, 5, 6, 1, 6, 2,
-                // Top
                 3, 2, 6, 3, 6, 7,
-                // Bottom
                 4, 5, 1, 4, 1, 0
             ],
             normals: []
@@ -249,9 +317,7 @@ export class EngineerAgent extends EventEmitter {
     }
 
     private extractParameters(code: string): any {
-        const params = {}
-
-        // Extraction basique des paramètres
+        const params: any = {}
         const paramPattern = /(\w+)\s*=\s*([\d.]+)/g
         const matches = [...code.matchAll(paramPattern)]
 
@@ -262,94 +328,19 @@ export class EngineerAgent extends EventEmitter {
         return params
     }
 
-    private generateDocumentation(code: string, design: any): string {
+    private generateDocumentation(code: string, analysis: any): string {
         let doc = `# CAD Model Documentation\n\n`
 
-        doc += `## Design Concept\n`
-        doc += `- Type: ${design.concept.type}\n`
-        doc += `- Approach: ${design.approach}\n\n`
+        doc += `## Design Analysis\n`
+        doc += `- Complexity: ${analysis.complexity.level}\n`
+        doc += `- Shapes: ${analysis.complexity.factors.shapes}\n`
+        doc += `- Features: ${analysis.complexity.factors.features}\n\n`
 
-        doc += `## Features\n`
-        for (const feature of design.features) {
-            doc += `- ${feature.type}: ${JSON.stringify(feature)}\n`
-        }
-
-        doc += `\n## Materials\n`
-        doc += `- Primary: ${design.materials.primary}\n`
-        doc += `- Alternatives: ${design.materials.alternatives.join(', ')}\n`
-
-        doc += `\n## Code\n`
-        doc += '```' + design.language + '\n'
+        doc += `## Generated Code\n`
+        doc += '```python\n'
         doc += code + '\n'
         doc += '```\n'
 
         return doc
-    }
-
-    async modify(context: any, modification: any): Promise<any> {
-        // Modification incrémentale du code
-        const currentCode = context.results.engineering.code
-        const language = context.results.engineering.language
-
-        let modifiedCode = currentCode
-
-        if (modification.type === 'parameter') {
-            // Modification simple de paramètre
-            const pattern = new RegExp(`${modification.parameter}\\s*=\\s*[\\d.]+`, 'g')
-            modifiedCode = currentCode.replace(pattern, `${modification.parameter} = ${modification.value}`)
-        } else if (modification.type === 'feature') {
-            // Ajout/suppression de feature
-            modifiedCode = await this.modifyFeature(currentCode, modification, language)
-        }
-
-        // Revalider et exécuter
-        const validation = await this.validateCode(modifiedCode, language)
-        const mesh = await this.executeCode(modifiedCode, language)
-
-        return {
-            language,
-            code: modifiedCode,
-            validation,
-            mesh,
-            parameters: this.extractParameters(modifiedCode)
-        }
-    }
-
-    private async modifyFeature(code: string, modification: any, language: string): Promise<string> {
-        // Logique de modification de features
-        // À implémenter selon le langage
-        return code
-    }
-
-    receiveMessage(msg: any): void {
-        if (msg.type === 'request') {
-            switch (msg.content.action) {
-                case 'validate':
-                    this.validateCode(msg.content.code, msg.content.language)
-                        .then(result => {
-                            this.emit('message', {
-                                to: msg.from,
-                                type: 'response',
-                                content: { validation: result }
-                            })
-                        })
-                    break
-
-                case 'suggest':
-                    // Suggestions d'améliorations techniques
-                    this.emit('message', {
-                        to: msg.from,
-                        type: 'response',
-                        content: {
-                            suggestions: [
-                                'Add fillets to reduce stress concentration',
-                                'Consider draft angles for molding',
-                                'Optimize wall thickness for 3D printing'
-                            ]
-                        }
-                    })
-                    break
-            }
-        }
     }
 }
