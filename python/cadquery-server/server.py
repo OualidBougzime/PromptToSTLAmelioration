@@ -2,140 +2,112 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cadquery as cq
-import numpy as np
-import json
-import base64
-import tempfile
-import os
 import traceback
 
 app = Flask(__name__)
 CORS(app)
 
-def mesh_to_dict(mesh):
-    """Convert CadQuery mesh to dictionary"""
-    vertices = []
-    faces = []
-    normals = []
-    
-    # Extract vertices and faces
-    for vertex in mesh.vertices():
-        vertices.extend([vertex.X, vertex.Y, vertex.Z])
-    
-    for face in mesh.faces():
-        # Get face triangulation
-        # This is simplified - real implementation would use proper triangulation
-        face_vertices = []
-        for edge in face.edges():
-            for vertex in edge.vertices():
-                face_vertices.append(vertex)
-        
-        if len(face_vertices) >= 3:
-            # Create triangles from face vertices
-            for i in range(1, len(face_vertices) - 1):
-                faces.extend([0, i, i+1])
-    
-    return {
-        "vertices": vertices,
-        "faces": faces,
-        "normals": normals
-    }
-
-@app.route('/validate', methods=['POST'])
-def validate():
-    """Validate CadQuery code"""
-    try:
-        code = request.json.get('code', '')
-        
-        # Create a safe execution environment
-        safe_globals = {
-            'cq': cq,
-            'np': np,
-            '__builtins__': {}
-        }
-        
-        # Try to compile the code
-        compile(code, '<string>', 'exec')
-        
-        return jsonify({
-            'syntax': True,
-            'warnings': [],
-            'errors': []
-        })
-        
-    except SyntaxError as e:
-        return jsonify({
-            'syntax': False,
-            'warnings': [],
-            'errors': [str(e)]
-        })
-    except Exception as e:
-        return jsonify({
-            'syntax': True,
-            'warnings': [str(e)],
-            'errors': []
-        })
-
-@app.route('/execute', methods=['POST'])
-def execute():
-    """Execute CadQuery code and return mesh"""
-    try:
-        code = request.json.get('code', '')
-        format_type = request.json.get('format', 'mesh')
-        
-        # Create execution environment
-        safe_globals = {
-            'cq': cq,
-            'np': np,
-            '__builtins__': {},
-            'result': None,
-            'show_object': lambda x: safe_globals.update({'result': x})
-        }
-        
-        # Execute the code
-        exec(code, safe_globals)
-        
-        result = safe_globals.get('result')
-        
-        if result is None:
-            return jsonify({'error': 'No result generated'}), 400
-        
-        if format_type == 'mesh':
-            # Convert to mesh format
-            mesh_data = mesh_to_dict(result)
-            return jsonify(mesh_data)
-            
-        elif format_type == 'stl':
-            # Export as STL
-            with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp:
-                result.exportStl(tmp.name)
-                with open(tmp.name, 'rb') as f:
-                    stl_data = base64.b64encode(f.read()).decode('utf-8')
-                os.unlink(tmp.name)
-            return jsonify({'stl': stl_data})
-            
-        elif format_type == 'step':
-            # Export as STEP
-            with tempfile.NamedTemporaryFile(suffix='.step', delete=False) as tmp:
-                result.exportStep(tmp.name)
-                with open(tmp.name, 'rb') as f:
-                    step_data = base64.b64encode(f.read()).decode('utf-8')
-                os.unlink(tmp.name)
-            return jsonify({'step': step_data})
-            
-    except Exception as e:
-        return jsonify({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
-
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'cadquery_version': cq.__version__
     })
 
+@app.route('/validate', methods=['POST'])
+def validate():
+    try:
+        code = request.json.get('code', '')
+        # Retire les imports car cq est déjà fourni
+        code_clean = code.replace('import cadquery as cq', '')
+        compile(code_clean, '<string>', 'exec')
+        return jsonify({'syntax': True, 'warnings': [], 'errors': []})
+    except SyntaxError as e:
+        return jsonify({'syntax': False, 'warnings': [], 'errors': [str(e)]})
+
+@app.route('/execute', methods=['POST'])
+def execute():
+    try:
+        code = request.json.get('code', '')
+        print(f"\n=== Executing CadQuery code ===\n{code}\n")
+        
+        # Retire l'import car cq est déjà fourni
+        code_clean = code.replace('import cadquery as cq', '').strip()
+        
+        # Variable pour capturer le résultat
+        result_obj = None
+        def show_object(obj):
+            nonlocal result_obj
+            result_obj = obj
+        
+        # Environnement avec cq déjà importé
+        exec_globals = {'cq': cq, 'show_object': show_object}
+        exec(code_clean, exec_globals)
+        
+        if result_obj is None:
+            return jsonify({'error': 'No result generated - show_object() was not called'}), 400
+        
+        print("Converting to mesh...")
+        vertices, faces = convert_to_mesh(result_obj)
+        print(f"Mesh generated: {len(vertices)//3} vertices, {len(faces)//3} triangles")
+        
+        return jsonify({
+            'vertices': vertices,
+            'faces': faces,
+            'normals': []
+        })
+        
+    except Exception as e:
+        print(f"ERROR: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
+
+def convert_to_mesh(shape):
+    """Convertit un objet CadQuery en mesh Three.js"""
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.BRep import BRep_Tool
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+    
+    vertices = []
+    faces = []
+    
+    ocp_shape = shape.val().wrapped
+    
+    # Tessellation
+    BRepMesh_IncrementalMesh(ocp_shape, 0.1, False, 0.5, True)
+    
+    vertex_offset = 0
+    face_explorer = TopExp_Explorer(ocp_shape, TopAbs_FACE)
+    
+    while face_explorer.More():
+        # Cast en TopoDS_Face
+        face = TopoDS.Face_s(face_explorer.Current())
+        location = TopLoc_Location()
+        triangulation = BRep_Tool.Triangulation_s(face, location)
+        
+        if triangulation:
+            for i in range(1, triangulation.NbNodes() + 1):
+                node = triangulation.Node(i)
+                vertices.extend([node.X(), node.Y(), node.Z()])
+            
+            for i in range(1, triangulation.NbTriangles() + 1):
+                triangle = triangulation.Triangle(i)
+                n1, n2, n3 = triangle.Get()
+                faces.extend([
+                    n1 - 1 + vertex_offset,
+                    n2 - 1 + vertex_offset,
+                    n3 - 1 + vertex_offset
+                ])
+            
+            vertex_offset += triangulation.NbNodes()
+        
+        face_explorer.Next()
+    
+    return vertices, faces
+
 if __name__ == '__main__':
+    print("Starting CadQuery server on port 8788...")
     app.run(host='0.0.0.0', port=8788, debug=True)

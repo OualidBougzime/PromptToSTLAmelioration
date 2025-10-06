@@ -1,46 +1,13 @@
-﻿// server/learning/ml-engine.ts
-import * as tf from '@tensorflow/tfjs-node'
-
+﻿// server/learning/ml-engine.ts - Version simplifiée sans TensorFlow
 export class MLEngine {
-    private model: tf.LayersModel | null = null
     private patterns: Map<string, any> = new Map()
 
     constructor() {
-        this.initializeModel()
-    }
-
-    private async initializeModel() {
-        try {
-            // Try to load existing model
-            this.model = await tf.loadLayersModel('file://./models/cad-generator/model.json')
-        } catch {
-            // Create new model if not exists
-            this.model = this.createModel()
-        }
-    }
-
-    private createModel(): tf.LayersModel {
-        const model = tf.sequential({
-            layers: [
-                tf.layers.dense({ inputShape: [100], units: 128, activation: 'relu' }),
-                tf.layers.dropout({ rate: 0.2 }),
-                tf.layers.dense({ units: 64, activation: 'relu' }),
-                tf.layers.dense({ units: 32, activation: 'relu' }),
-                tf.layers.dense({ units: 10, activation: 'softmax' })
-            ]
-        })
-
-        model.compile({
-            optimizer: 'adam',
-            loss: 'categoricalCrossentropy',
-            metrics: ['accuracy']
-        })
-
-        return model
+        console.log('✅ ML Engine initialized (simple mode - no TensorFlow)')
     }
 
     async learn(prompt: string, result: any): Promise<void> {
-        // Store pattern for analysis
+        // Store pattern for simple analysis
         const pattern = {
             prompt,
             result,
@@ -49,72 +16,29 @@ export class MLEngine {
         }
 
         this.patterns.set(prompt, pattern)
-
-        // Periodic training
-        if (this.patterns.size % 10 === 0) {
-            await this.train()
-        }
-    }
-
-    private async train(): Promise<void> {
-        if (this.patterns.size < 10) return
-
-        // Prepare training data
-        const xs: number[][] = []
-        const ys: number[][] = []
-
-        this.patterns.forEach((pattern) => {
-            xs.push(this.promptToVector(pattern.prompt))
-            ys.push(this.resultToVector(pattern.result))
-        })
-
-        const xTensor = tf.tensor2d(xs)
-        const yTensor = tf.tensor2d(ys)
-
-        // Train model
-        await this.model.fit(xTensor, yTensor, {
-            epochs: 10,
-            batchSize: 32,
-            validationSplit: 0.2
-        })
-
-        // Save model
-        await this.model.save('file://./models/cad-generator')
-
-        // Cleanup
-        xTensor.dispose()
-        yTensor.dispose()
-    }
-
-    async predict(prompt: string): Promise<any> {
-        if (!this.model) return null
-
-        const input = tf.tensor2d([this.promptToVector(prompt)])
-        const prediction = this.model.predict(input) as tf.Tensor
-        const result = await prediction.array()
-
-        input.dispose()
-        prediction.dispose()
-
-        return this.vectorToSuggestion(result[0])
+        console.log(`📚 Learned pattern: ${prompt} (${this.patterns.size} total)`)
     }
 
     async getSuggestions(prompt: string): Promise<string[]> {
         const suggestions: string[] = []
 
-        // Find similar patterns
+        // Find similar patterns based on keywords
         const similar = this.findSimilarPatterns(prompt)
 
         similar.forEach(pattern => {
             if (pattern.success) {
-                suggestions.push(`Try: ${pattern.result.design?.approach}`)
+                suggestions.push(`Similar to: ${pattern.prompt}`)
             }
         })
 
-        // ML predictions
-        const prediction = await this.predict(prompt)
-        if (prediction) {
-            suggestions.push(...prediction.suggestions)
+        // Add generic suggestions based on keywords
+        if (prompt.toLowerCase().includes('gear')) {
+            suggestions.push('Consider adding tooth profile details')
+            suggestions.push('Specify module or pitch')
+        }
+        if (prompt.toLowerCase().includes('box')) {
+            suggestions.push('Add wall thickness parameter')
+            suggestions.push('Consider adding mounting holes')
         }
 
         return suggestions.slice(0, 5)
@@ -131,48 +55,23 @@ export class MLEngine {
         return insights
     }
 
-    private promptToVector(prompt: string): number[] {
-        // Simple bag-of-words vectorization
-        const vector = new Array(100).fill(0)
-        const words = prompt.toLowerCase().split(' ')
+    async predict(prompt: string): Promise<any> {
+        // Simple prediction based on patterns
+        const similar = this.findSimilarPatterns(prompt)
 
-        words.forEach((word, i) => {
-            const index = this.hashWord(word) % 100
-            vector[index] = 1
-        })
+        if (similar.length === 0) {
+            return {
+                suggestions: ['Try being more specific with dimensions'],
+                confidence: 0.3
+            }
+        }
 
-        return vector
-    }
-
-    private resultToVector(result: any): number[] {
-        // Encode result characteristics
-        const vector = new Array(10).fill(0)
-
-        vector[0] = result.validation?.score / 100 || 0
-        vector[1] = result.analysis?.complexity || 0
-        vector[2] = result.design?.features?.length / 10 || 0
-        vector[3] = result.model?.representations ? 1 : 0
-        // ... more features
-
-        return vector
-    }
-
-    private vectorToSuggestion(vector: number[]): any {
         return {
-            suggestions: [
-                vector[0] > 0.5 ? 'Consider adding more detail' : 'Simplify the design',
-                vector[1] > 0.7 ? 'This is a complex model' : 'This is a simple model'
-            ]
+            suggestions: similar.slice(0, 3).map(p =>
+                `Based on similar: ${p.prompt}`
+            ),
+            confidence: similar[0].similarity
         }
-    }
-
-    private hashWord(word: string): number {
-        let hash = 0
-        for (let i = 0; i < word.length; i++) {
-            hash = ((hash << 5) - hash) + word.charCodeAt(i)
-            hash = hash & hash
-        }
-        return Math.abs(hash)
     }
 
     private findSimilarPatterns(prompt: string): any[] {
@@ -184,7 +83,7 @@ export class MLEngine {
             const intersection = new Set([...words].filter(x => patternWords.has(x)))
             const similarity = intersection.size / Math.max(words.size, patternWords.size)
 
-            if (similarity > 0.5) {
+            if (similarity > 0.3) {
                 similar.push({ ...pattern, similarity })
             }
         })
@@ -193,6 +92,8 @@ export class MLEngine {
     }
 
     private calculateSuccessRate(): number {
+        if (this.patterns.size === 0) return 0
+
         let success = 0
         this.patterns.forEach(pattern => {
             if (pattern.success) success++
@@ -204,8 +105,11 @@ export class MLEngine {
         const features = new Map<string, number>()
 
         this.patterns.forEach(pattern => {
-            pattern.result.design?.features?.forEach(f => {
-                features.set(f.type, (features.get(f.type) || 0) + 1)
+            const words = pattern.prompt.toLowerCase().split(' ')
+            words.forEach(word => {
+                if (word.length > 3) { // Ignore short words
+                    features.set(word, (features.get(word) || 0) + 1)
+                }
             })
         })
 
@@ -216,38 +120,22 @@ export class MLEngine {
     }
 
     private analyzeTrends(): any {
-        // Analyze trends over time
         const trends = {
             complexity: [],
             success: [],
-            domains: {}
+            recentPatterns: []
         }
 
-        // Group by time periods
-        const now = Date.now()
-        const day = 24 * 60 * 60 * 1000
+        // Get last 10 patterns
+        const recent = Array.from(this.patterns.values())
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, 10)
 
-        for (let i = 7; i >= 0; i--) {
-            const start = now - (i + 1) * day
-            const end = now - i * day
-
-            let complexity = 0
-            let success = 0
-            let count = 0
-
-            this.patterns.forEach(pattern => {
-                if (pattern.timestamp >= start && pattern.timestamp < end) {
-                    complexity += pattern.result.analysis?.complexity || 0
-                    if (pattern.success) success++
-                    count++
-                }
-            })
-
-            if (count > 0) {
-                trends.complexity.push(complexity / count)
-                trends.success.push((success / count) * 100)
-            }
-        }
+        trends.recentPatterns = recent.map(p => ({
+            prompt: p.prompt,
+            success: p.success,
+            timestamp: new Date(p.timestamp).toISOString()
+        }))
 
         return trends
     }

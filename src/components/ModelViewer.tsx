@@ -1,8 +1,8 @@
 // src/components/ModelViewer.tsx
 import React, { Suspense } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Grid, Environment, Stage, PresentationControls } from '@react-three/drei'
-import { EffectComposer, Bloom, SSAO, SMAA } from '@react-three/postprocessing'
+import { OrbitControls, Grid, Environment, Stage } from '@react-three/drei'
+import { EffectComposer, Bloom, SMAA } from '@react-three/postprocessing'
 import * as THREE from 'three'
 
 interface ModelViewerProps {
@@ -12,7 +12,6 @@ interface ModelViewerProps {
 function Model({ meshData }: { meshData: any }) {
     if (!meshData) return null
 
-    // Convert mesh data to Three.js geometry
     const geometry = React.useMemo(() => {
         const geo = new THREE.BufferGeometry()
 
@@ -20,8 +19,10 @@ function Model({ meshData }: { meshData: any }) {
             geo.setAttribute('position', new THREE.Float32BufferAttribute(meshData.vertices, 3))
         }
 
-        if (meshData.normals) {
+        if (meshData.normals && meshData.normals.length > 0) {
             geo.setAttribute('normal', new THREE.Float32BufferAttribute(meshData.normals, 3))
+        } else {
+            geo.computeVertexNormals()
         }
 
         if (meshData.faces) {
@@ -37,7 +38,7 @@ function Model({ meshData }: { meshData: any }) {
     return (
         <mesh geometry={geometry}>
             <meshStandardMaterial
-                color="#8080ff"
+                color="#6366f1"
                 metalness={0.3}
                 roughness={0.4}
                 envMapIntensity={0.5}
@@ -49,7 +50,7 @@ function Model({ meshData }: { meshData: any }) {
 export function ModelViewer({ model }: ModelViewerProps) {
     return (
         <Canvas
-            camera={{ position: [50, 50, 50], fov: 50 }}
+            camera={{ position: [20, 20, 20], fov: 50 }}
             gl={{ antialias: true, alpha: false }}
         >
             <Suspense fallback={null}>
@@ -75,7 +76,6 @@ export function ModelViewer({ model }: ModelViewerProps) {
                 />
 
                 <EffectComposer>
-                    <SSAO radius={0.4} intensity={50} luminanceInfluence={0.4} />
                     <Bloom intensity={0.3} luminanceThreshold={0.9} />
                     <SMAA />
                 </EffectComposer>

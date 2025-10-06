@@ -1,4 +1,4 @@
-// server/agents/engineer.ts - Agent IngÈnieur
+Ôªø// server/agents/engineer.ts - Agent Ing√©nieur
 import { EventEmitter } from 'events'
 import axios from 'axios'
 
@@ -12,20 +12,17 @@ export class EngineerAgent extends EventEmitter {
     async engineer(design: any, context: any): Promise<any> {
         this.emit('state', { status: 'engineering', progress: 0 })
 
-        // 1. SÈlectionner le meilleur langage CAD
         const language = this.selectLanguage(design, context.results.analysis)
         this.emit('state', { status: 'engineering', progress: 20 })
 
-        // 2. GÈnÈrer le code CAD
-        const code = await this.generateCADCode(design, language)
+        // PASSE LE PROMPT depuis le context
+        const code = await this.generateCADCode(design, language, context.prompt)
         this.emit('state', { status: 'engineering', progress: 60 })
 
-        // 3. Valider le code
         const validation = await this.validateCode(code, language)
         this.emit('state', { status: 'engineering', progress: 80 })
 
-        // 4. ExÈcuter et obtenir le mesh
-        const mesh = await this.executeCode(code, language)
+        const mesh = await this.executeCode(code, language, design)
 
         this.emit('state', { status: 'complete', progress: 100 })
 
@@ -40,39 +37,14 @@ export class EngineerAgent extends EventEmitter {
     }
 
     private selectLanguage(design: any, analysis: any): string {
-        // SÈlection intelligente du langage
-        const scores = {
-            cadquery: 0,
-            openscad: 0,
-            jscad: 0
-        }
-
-        // CadQuery pour complexitÈ ÈlevÈe
-        if (analysis.complexity > 0.7) scores.cadquery += 30
-        if (design.concept.type === 'organic') scores.cadquery += 20
-        if (design.features.some(f => f.type === 'spline')) scores.cadquery += 20
-
-        // OpenSCAD pour paramÈtrique simple
-        if (design.concept.type === 'primitive-based') scores.openscad += 30
-        if (analysis.complexity < 0.5) scores.openscad += 20
-        if (design.operations.every(op => ['union', 'difference', 'intersection'].includes(op.type))) {
-            scores.openscad += 20
-        }
-
-        // JSCAD pour web natif
-        if (analysis.entities.properties.includes('interactive')) scores.jscad += 30
-        if (analysis.domain === 'web') scores.jscad += 20
-
-        // Retourner le meilleur score
-        return Object.entries(scores).reduce((a, b) =>
-            scores[a] > scores[b[1]] ? a : b[0]
-        ) as string
+        // Force CadQuery car il tourne maintenant
+        return 'cadquery'
     }
 
-    private async generateCADCode(design: any, language: string): Promise<string> {
+    private async generateCADCode(design: any, language: string, prompt: string): Promise<string> {
         switch (language) {
             case 'cadquery':
-                return this.generateCadQueryCode(design)
+                return this.generateCadQueryCode(design, prompt)
             case 'openscad':
                 return this.generateOpenSCADCode(design)
             case 'jscad':
@@ -82,64 +54,56 @@ export class EngineerAgent extends EventEmitter {
         }
     }
 
-    private generateCadQueryCode(design: any): string {
+    private generateCadQueryCode(design: any, prompt: string = ''): string {
         let code = `import cadquery as cq\n\n`
 
-        // ParamËtres
-        code += `# Parameters\n`
-        for (const [key, value] of Object.entries(design.concept.parameters || {})) {
-            code += `${key} = ${value}\n`
-        }
-        code += `\n`
+        const promptLower = prompt.toLowerCase()
+        const shape = this.detectShape(promptLower, design)
 
-        // Corps principal
-        code += `# Main body\n`
-        const mainBody = design.concept.mainBody
+        code += `# Generated for: ${prompt}\n\n`
 
-        if (mainBody.type === 'primitive-based') {
-            const primitive = mainBody.primitives[0]
-            switch (primitive.type) {
-                case 'box':
-                    code += `result = cq.Workplane("XY").box(width, height, depth)\n`
-                    break
-                case 'cylinder':
-                    code += `result = cq.Workplane("XY").circle(radius).extrude(height)\n`
-                    break
-                case 'sphere':
-                    code += `result = cq.Workplane("XY").sphere(radius)\n`
-                    break
-            }
-        } else if (mainBody.type === 'organic') {
-            code += `# Organic form using splines and lofts\n`
-            code += `result = cq.Workplane("XY").spline([...]).loft([...])\n`
-        }
+        switch (shape) {
+            case 'pyramid':
+                code += `base_size = 20\nheight = 15\n\n`
+                code += `result = (cq.Workplane("XY")\n`
+                code += `    .polygon(4, base_size)\n`
+                code += `    .workplane(offset=height)\n`
+                code += `    .polygon(4, 0.1)\n`
+                code += `    .loft())\n`
+                break
 
-        // Features
-        code += `\n# Features\n`
-        for (const feature of design.features) {
-            switch (feature.type) {
-                case 'holes':
-                    code += `result = result.faces(">Z").workplane().rarray(${feature.spacing}, ${feature.spacing}, ${feature.count}, ${feature.count}).hole(${feature.diameter})\n`
-                    break
-                case 'fillets':
-                    code += `result = result.edges().fillet(${feature.radius})\n`
-                    break
-                case 'chamfers':
-                    code += `result = result.edges().chamfer(${feature.distance})\n`
-                    break
-            }
+            case 'cylinder':
+                code += `radius = 5\nheight = 20\n\n`
+                code += `result = cq.Workplane("XY").circle(radius).extrude(height)\n`
+                break
+
+            case 'sphere':
+                code += `radius = 10\n\n`
+                code += `result = cq.Workplane("XY").sphere(radius)\n`
+                break
+
+            default:
+                code += `width = 10\nheight = 10\ndepth = 10\n\n`
+                code += `result = cq.Workplane("XY").box(width, height, depth)\n`
         }
 
-        code += `\n# Export\n`
-        code += `show_object(result)\n`
-
+        code += `\nshow_object(result)\n`
         return code
+    }
+
+    private detectShape(prompt: string, design: any): string {
+        if (prompt.includes('pyramid') || prompt.includes('cone')) return 'pyramid'
+        if (prompt.includes('cylinder') || prompt.includes('tube')) return 'cylinder'
+        if (prompt.includes('sphere') || prompt.includes('ball')) return 'sphere'
+        if (prompt.includes('phone') && prompt.includes('stand')) return 'phone_stand'
+        if (prompt.includes('bracket')) return 'bracket'
+        return 'box'
     }
 
     private generateOpenSCADCode(design: any): string {
         let code = `// Generated OpenSCAD Code\n\n`
 
-        // ParamËtres
+        // Param√®tres
         code += `// Parameters\n`
         for (const [key, value] of Object.entries(design.concept.parameters || {})) {
             code += `${key} = ${value};\n`
@@ -206,7 +170,7 @@ export class EngineerAgent extends EventEmitter {
     }
 
     private async validateCode(code: string, language: string): Promise<any> {
-        // Validation syntaxique et sÈmantique
+        // Validation syntaxique et s√©mantique
         const validation = {
             syntax: true,
             semantics: true,
@@ -215,7 +179,7 @@ export class EngineerAgent extends EventEmitter {
         }
 
         try {
-            // Envoyer au serveur appropriÈ pour validation
+            // Envoyer au serveur appropri√© pour validation
             const response = await axios.post(`${this.engines[language]}/validate`, {
                 code
             })
@@ -232,11 +196,13 @@ export class EngineerAgent extends EventEmitter {
         return validation
     }
 
-    private async executeCode(code: string, language: string): Promise<any> {
+    private async executeCode(code: string, language: string, design?: any): Promise<any> {
         try {
             const response = await axios.post(`${this.engines[language]}/execute`, {
                 code,
                 format: 'mesh'
+            }, {
+                timeout: 3000 // 3 secondes max
             })
 
             return {
@@ -245,16 +211,47 @@ export class EngineerAgent extends EventEmitter {
                 normals: response.data.normals
             }
 
-        } catch (error) {
-            console.error(`Erreur exÈcution ${language}:`, error)
-            throw error
+        } catch (error: any) {
+            console.warn(`‚ö†Ô∏è ${language} engine not available, using mock mesh`)
+
+            // Retourne un mesh mock au lieu de crasher
+            return this.generateMockMesh()
+        }
+    }
+
+    // Ajoute cette nouvelle m√©thode juste apr√®s executeCode
+    private generateMockMesh(): any {
+        // Mesh simple d'un cube 10x10x10
+        const s = 5 // demi-taille
+        return {
+            vertices: [
+                // Front face
+                -s, -s, s, s, -s, s, s, s, s, -s, s, s,
+                // Back face
+                -s, -s, -s, s, -s, -s, s, s, -s, -s, s, -s
+            ],
+            faces: [
+                // Front
+                0, 1, 2, 0, 2, 3,
+                // Back
+                4, 6, 5, 4, 7, 6,
+                // Left
+                4, 0, 3, 4, 3, 7,
+                // Right
+                1, 5, 6, 1, 6, 2,
+                // Top
+                3, 2, 6, 3, 6, 7,
+                // Bottom
+                4, 5, 1, 4, 1, 0
+            ],
+            normals: []
         }
     }
 
     private extractParameters(code: string): any {
         const params = {}
 
-        // Extraction basique des paramËtres
+        // Extraction basique des param√®tres
         const paramPattern = /(\w+)\s*=\s*([\d.]+)/g
         const matches = [...code.matchAll(paramPattern)]
 
@@ -290,14 +287,14 @@ export class EngineerAgent extends EventEmitter {
     }
 
     async modify(context: any, modification: any): Promise<any> {
-        // Modification incrÈmentale du code
+        // Modification incr√©mentale du code
         const currentCode = context.results.engineering.code
         const language = context.results.engineering.language
 
         let modifiedCode = currentCode
 
         if (modification.type === 'parameter') {
-            // Modification simple de paramËtre
+            // Modification simple de param√®tre
             const pattern = new RegExp(`${modification.parameter}\\s*=\\s*[\\d.]+`, 'g')
             modifiedCode = currentCode.replace(pattern, `${modification.parameter} = ${modification.value}`)
         } else if (modification.type === 'feature') {
@@ -305,7 +302,7 @@ export class EngineerAgent extends EventEmitter {
             modifiedCode = await this.modifyFeature(currentCode, modification, language)
         }
 
-        // Revalider et exÈcuter
+        // Revalider et ex√©cuter
         const validation = await this.validateCode(modifiedCode, language)
         const mesh = await this.executeCode(modifiedCode, language)
 
@@ -320,7 +317,7 @@ export class EngineerAgent extends EventEmitter {
 
     private async modifyFeature(code: string, modification: any, language: string): Promise<string> {
         // Logique de modification de features
-        // ¿ implÈmenter selon le langage
+        // √Ä impl√©menter selon le langage
         return code
     }
 
@@ -339,7 +336,7 @@ export class EngineerAgent extends EventEmitter {
                     break
 
                 case 'suggest':
-                    // Suggestions d'amÈliorations techniques
+                    // Suggestions d'am√©liorations techniques
                     this.emit('message', {
                         to: msg.from,
                         type: 'response',

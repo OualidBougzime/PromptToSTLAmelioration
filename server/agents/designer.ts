@@ -145,6 +145,28 @@ export class DesignerAgent extends EventEmitter {
         return null
     }
 
+    private determineCombination(primitives: any[]): string {
+        if (primitives.length === 0) return 'none'
+        if (primitives.length === 1) return 'single'
+
+        // Déterminer le type de combinaison basé sur les primitives
+        const types = primitives.map(p => p.type)
+
+        if (types.every(t => t === types[0])) {
+            return 'array' // Toutes les mêmes primitives
+        }
+
+        if (types.includes('box') && types.includes('cylinder')) {
+            return 'union' // Combinaison typique
+        }
+
+        if (primitives.length === 2) {
+            return 'boolean' // Opération booléenne
+        }
+
+        return 'composite' // Combinaison complexe
+    }
+
     private async generateForm(analysis: any): Promise<any> {
         // Génération de forme algorithmique/générative
         return {
