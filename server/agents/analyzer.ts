@@ -2,30 +2,50 @@
 import { EventEmitter } from 'events'
 import { NLPProcessor } from '../nlp/processor'
 import { DomainClassifier } from '../ml/classifier'
+import { AdvancedNLPProcessor } from '../nlp/advanced-processor'
 
 export class AnalyzerAgent extends EventEmitter {
     private nlp: NLPProcessor
+    private advancedNlp: AdvancedNLPProcessor  // 🔥 NOUVEAU
     private classifier: DomainClassifier
 
     constructor() {
         super()
         this.nlp = new NLPProcessor()
+        this.advancedNlp = new AdvancedNLPProcessor()  // 🔥 NOUVEAU
         this.classifier = new DomainClassifier()
     }
 
     async analyze(prompt: string, context: any = {}): Promise<any> {
         this.emit('state', { status: 'analyzing', progress: 0 })
 
-        // 1. Analyse NLP complète
+        // 🔥 1. Essayer d'abord le pattern matching avancé
+        const advancedPattern = await this.advancedNlp.detectPattern(prompt)
+        if (advancedPattern) {
+            console.log('✅ Advanced pattern matched:', advancedPattern.type)
+
+            return {
+                prompt,
+                pattern: advancedPattern,
+                isAdvancedPattern: true,  // 🔥 FLAG
+                domain: await this.classifier.classify(prompt),
+                complexity: { level: 'advanced', score: 7 }
+            }
+        }
+
+        // 2. Sinon, utiliser le NLP classique
         const nlpResult = await this.nlp.process(prompt)
+        console.log('📊 NLP Result:', JSON.stringify(nlpResult, null, 2)) // ✅ AJOUT
         this.emit('state', { status: 'analyzing', progress: 25 })
 
         // 2. Classification du domaine
         const domain = await this.classifier.classify(prompt)
+        console.log('📊 Domain:', domain) // ✅ AJOUT
         this.emit('state', { status: 'analyzing', progress: 50 })
 
         // 3. Décomposition géométrique
         const geometry = this.decomposeGeometry(nlpResult)
+        console.log('📊 Geometry:', JSON.stringify(geometry, null, 2)) // ✅ AJOUT
         this.emit('state', { status: 'analyzing', progress: 75 })
 
         // 4. Analyse des contraintes
@@ -49,14 +69,31 @@ export class AnalyzerAgent extends EventEmitter {
     private decomposeGeometry(nlpResult: any): any {
         const { shapes, operations, features, dimensions } = nlpResult
 
-        // Construire l'arbre géométrique
+        // 🔥 VÉRIFIE D'ABORD LES FORMES SPÉCIALES
+        const specialShape = this.detectSpecialShape(nlpResult.text, dimensions, features)
+        if (specialShape) {
+            console.log('🎯 Special shape detected:', specialShape)
+            return {
+                root: specialShape,
+                operations: [],
+                features: features.map(f => ({
+                    type: f.type,
+                    params: f.params || this.inferFeatureParams(f.type, dimensions),
+                    location: this.inferFeatureLocation(f)
+                })),
+                isSpecial: true
+            }
+        }
+
+        // Sinon, construire l'arbre géométrique normal
         const geometryTree = {
             root: null as any,
             operations: [] as any[],
-            features: [] as any[]
+            features: [] as any[],
+            isSpecial: false
         }
 
-        // 1. Identifier la forme principale (première ou plus grande)
+        // 1. Identifier la forme principale
         if (shapes.length > 0) {
             const mainShape = shapes[0]
             geometryTree.root = {
@@ -86,6 +123,94 @@ export class AnalyzerAgent extends EventEmitter {
         }))
 
         return geometryTree
+    }
+
+    private detectSpecialShape(text: string, dimensions: any, features: any[]): any | null {
+        const lower = text.toLowerCase()
+
+        // Détecter GEAR
+        if (lower.includes('gear') || lower.includes('cog') || lower.includes('sprocket')) {
+            const teeth = this.extractNumber(text, ['teeth', 'tooth']) || 12
+            const radius = this.extractNumber(text, ['radius']) || dimensions.values?.[1] || 10
+            const height = this.extractNumber(text, ['height', 'thickness']) || 5
+
+            // Chercher le trou central dans les features
+            const holeFeature = features.find(f => f.type === 'hole')
+            const centerHole = holeFeature?.params?.diameter || 0
+
+            console.log(`🎯 Gear params extracted: teeth=${teeth}, radius=${radius}, height=${height}, centerHole=${centerHole}`)
+
+            return {
+                type: 'gear',
+                params: { teeth, radius, height, centerHole },
+                confidence: 0.95
+            }
+        }
+
+        // Détecter BRACKET
+        if (lower.includes('bracket') || lower.includes('mount')) {
+            return {
+                type: 'bracket',
+                params: this.inferBracketParams(text, dimensions),
+                confidence: 0.85
+            }
+        }
+
+        // Détecter SPRING
+        if (lower.includes('spring') || lower.includes('coil')) {
+            return {
+                type: 'spring',
+                params: this.inferSpringParams(text, dimensions),
+                confidence: 0.85
+            }
+        }
+
+        return null
+    }
+
+    private inferSpringParams(text: string, dimensions: any): any {
+        const values = dimensions.values || []
+        return {
+            diameter: values[0] || 10,
+            wireDiameter: values[1] || 2,
+            coils: values[2] || 10,
+            height: values[3] || 50
+        }
+    }
+
+    private inferBracketParams(text: string, dimensions: any): any {
+        const values = dimensions.values || []
+        return {
+            baseWidth: values[0] || 50,
+            baseDepth: values[1] || 30,
+            baseHeight: values[2] || 5,
+            wallHeight: values[3] || 40,
+            wallThickness: values[4] || 5
+        }
+    }
+
+    private extractNumber(text: string, keywords: string[]): number | null {
+        for (const keyword of keywords) {
+            // Cherche "keyword 10" ou "keyword: 10" ou "keyword = 10"
+            const pattern = new RegExp(`${keyword}[:\\s=]*(\\d+(?:\\.\\d+)?)`, 'i')
+            const match = text.match(pattern)
+            if (match) {
+                console.log(`📊 Found ${keyword}: ${match[1]}`)
+                return parseFloat(match[1])
+            }
+        }
+
+        // Cherche aussi "10 teeth" ou "12 teeth"
+        for (const keyword of keywords) {
+            const pattern = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${keyword}`, 'i')
+            const match = text.match(pattern)
+            if (match) {
+                console.log(`📊 Found ${keyword}: ${match[1]}`)
+                return parseFloat(match[1])
+            }
+        }
+
+        return null
     }
 
     private inferParameters(shapeType: string, dimensions: any, index: number = 0): any {
@@ -123,17 +248,24 @@ export class AnalyzerAgent extends EventEmitter {
     }
 
     private inferOperation(shape: any, operations: string[]): string {
-        // Si "hole" ou "cut" dans le contexte → subtract
-        if (shape.context && (shape.context.includes('hole') || shape.context.includes('cut'))) {
+        const context = (shape.context || '').toLowerCase()
+
+        // Chercher des indices dans le contexte
+        if (context.includes('hole') || context.includes('cut') ||
+            context.includes('subtract') || context.includes('remove')) {
             return 'subtract'
         }
 
-        // Si opérations détectées
-        if (operations.includes('subtract')) return 'subtract'
-        if (operations.includes('union')) return 'union'
-        if (operations.includes('intersect')) return 'intersect'
+        if (context.includes('add') || context.includes('combine') ||
+            context.includes('merge') || context.includes('union')) {
+            return 'union'
+        }
 
-        // Par défaut → union
+        if (context.includes('intersect') || context.includes('overlap')) {
+            return 'intersect'
+        }
+
+        // Si plusieurs formes détectées → union par défaut
         return 'union'
     }
 

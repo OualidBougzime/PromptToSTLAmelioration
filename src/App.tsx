@@ -1,4 +1,4 @@
-﻿// src/App.tsx - Version corrigée avec bonnes icônes
+﻿// src/App.tsx
 import React, { useState, useEffect } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { PromptInput } from './components/PromptInput'
@@ -17,7 +17,6 @@ export default function App() {
     const [agents, setAgents] = useState<any[]>([])
     const [activeTab, setActiveTab] = useState<'code' | 'params'>('code')
 
-    // Connect to server
     useEffect(() => {
         console.log('🔌 Connecting to server...')
         const newSocket = io('http://localhost:8787', {
@@ -43,7 +42,6 @@ export default function App() {
             toast.error('Cannot connect to server. Is it running on port 8787?')
         })
 
-        // Generation events
         newSocket.on('generation:start', () => {
             setIsGenerating(true)
             setAgents([])
@@ -113,11 +111,48 @@ export default function App() {
         })
     }
 
+    const handleDownloadSTL = async () => {
+        if (!currentModel || !currentModel.code?.cadquery) {
+            toast.error('No model to download')
+            return
+        }
+
+        try {
+            toast.loading('Preparing STL download...', { id: 'stl' })
+
+            const response = await fetch('http://localhost:8787/api/export-stl', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    code: currentModel.code.cadquery
+                })
+            })
+
+            if (!response.ok) {
+                throw new Error(`Export failed: ${response.statusText}`)
+            }
+
+            const blob = await response.blob()
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `model-${Date.now()}.stl`
+            document.body.appendChild(a)
+            a.click()
+            window.URL.revokeObjectURL(url)
+            document.body.removeChild(a)
+
+            toast.success('STL downloaded!', { id: 'stl' })
+        } catch (error: any) {
+            console.error('Download error:', error)
+            toast.error(`Failed to download STL: ${error.message}`, { id: 'stl' })
+        }
+    }
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800">
             <Toaster position="top-right" />
 
-            {/* Header */}
             <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-xl">
                 <div className="container mx-auto px-4 py-4 flex items-center justify-between">
                     <div className="flex items-center space-x-3">
@@ -132,8 +167,8 @@ export default function App() {
 
                     <div className="flex items-center space-x-4">
                         <div className={`px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-2 ${isConnected
-                                ? 'bg-green-500/20 text-green-400'
-                                : 'bg-red-500/20 text-red-400'
+                            ? 'bg-green-500/20 text-green-400'
+                            : 'bg-red-500/20 text-red-400'
                             }`}>
                             <span className="animate-pulse">●</span>
                             <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
@@ -142,11 +177,9 @@ export default function App() {
                 </div>
             </header>
 
-            {/* Main Content */}
             <div className="container mx-auto px-4 py-6">
                 <div className="grid grid-cols-12 gap-6">
 
-                    {/* Left Panel - Agents Status */}
                     <div className="col-span-3">
                         <div className="bg-gray-900/50 backdrop-blur-xl rounded-xl p-4 border border-gray-800">
                             <h2 className="text-lg font-semibold mb-4 flex items-center">
@@ -157,7 +190,6 @@ export default function App() {
                         </div>
                     </div>
 
-                    {/* Center - 3D Viewer */}
                     <div className="col-span-6 space-y-6">
                         <div className="bg-gray-900/50 backdrop-blur-xl rounded-xl border border-gray-800 h-[500px] overflow-hidden">
                             {currentModel ? (
@@ -173,24 +205,23 @@ export default function App() {
                             )}
                         </div>
 
-                        {/* Prompt Input */}
                         <PromptInput
                             onGenerate={handleGenerate}
+                            onDownloadSTL={handleDownloadSTL}
                             isGenerating={isGenerating}
                             disabled={!isConnected}
+                            hasModel={!!currentModel}
                         />
                     </div>
 
-                    {/* Right Panel - Details */}
                     <div className="col-span-3">
                         <div className="bg-gray-900/50 backdrop-blur-xl rounded-xl border border-gray-800 p-4">
-                            {/* Tabs */}
                             <div className="flex space-x-2 mb-4 border-b border-gray-800">
                                 <button
                                     onClick={() => setActiveTab('code')}
                                     className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors ${activeTab === 'code'
-                                            ? 'bg-blue-600 text-white'
-                                            : 'text-gray-400 hover:text-white'
+                                        ? 'bg-blue-600 text-white'
+                                        : 'text-gray-400 hover:text-white'
                                         }`}
                                 >
                                     <Code className="w-4 h-4" />
@@ -199,8 +230,8 @@ export default function App() {
                                 <button
                                     onClick={() => setActiveTab('params')}
                                     className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors ${activeTab === 'params'
-                                            ? 'bg-blue-600 text-white'
-                                            : 'text-gray-400 hover:text-white'
+                                        ? 'bg-blue-600 text-white'
+                                        : 'text-gray-400 hover:text-white'
                                         }`}
                                 >
                                     <Settings className="w-4 h-4" />
@@ -208,7 +239,6 @@ export default function App() {
                                 </button>
                             </div>
 
-                            {/* Tab Content */}
                             {activeTab === 'code' ? (
                                 currentModel?.code ? (
                                     <CodeEditor
@@ -240,7 +270,6 @@ export default function App() {
                 </div>
             </div>
 
-            {/* Footer Info */}
             <div className="fixed bottom-4 right-4 text-xs text-gray-600 bg-gray-900/80 px-3 py-2 rounded-lg backdrop-blur">
                 <div>Backend: {isConnected ? '🟢' : '🔴'} localhost:8787</div>
                 <div>Frontend: 🟢 localhost:5173</div>

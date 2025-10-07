@@ -2,12 +2,14 @@
 export class NLPProcessor {
     // Dictionnaire de formes avec synonymes
     private shapeKeywords = {
-        'box': ['box', 'cube', 'rectangular', 'block', 'case'],
-        'cylinder': ['cylinder', 'tube', 'pipe', 'round', 'cylindrical'],
-        'sphere': ['sphere', 'ball', 'round', 'spherical'],
-        'cone': ['cone', 'conical', 'pyramid', 'pyramidal'],
-        'torus': ['torus', 'donut', 'ring'],
-        'prism': ['prism', 'prismatic']
+        'box': ['box', 'cube', 'rectangular', 'block', 'case', 'square'],
+        'cylinder': ['cylinder', 'tube', 'pipe', 'round', 'cylindrical', 'column'],
+        'sphere': ['sphere', 'ball', 'round', 'spherical', 'orb'],
+        'cone': ['cone', 'conical', 'pyramid', 'pyramidal', 'funnel'],
+        'torus': ['torus', 'donut', 'ring', 'doughnut'],
+        'prism': ['prism', 'prismatic', 'wedge'],
+        'gear': ['gear', 'cog', 'sprocket', 'tooth', 'teeth'],
+        'bracket': ['bracket', 'mount', 'holder', 'support']
     }
 
     // Opérations booléennes

@@ -1,4 +1,4 @@
-// server/agents/optimizer.ts & validator.ts
+﻿// server/agents/optimizer.ts & validator.ts
 import { EventEmitter } from 'events'
 
 export class OptimizerAgent extends EventEmitter {
@@ -57,6 +57,17 @@ export class ValidatorAgent extends EventEmitter {
     async validate(result: any, context: any): Promise<any> {
         this.emit('state', { status: 'validating', progress: 0 })
 
+        // 🔥 Vérifier que result existe
+        if (!result) {
+            console.warn('⚠️ No result to validate')
+            return {
+                syntax: { valid: false, errors: ['No result provided'], warnings: [] },
+                geometry: { valid: false, vertices: 0, faces: 0, closed: false, manifold: false },
+                manufacturability: { printable: false, supportNeeded: false, overhangs: [], warnings: ['No model'] },
+                score: 0
+            }
+        }
+
         const validation = {
             syntax: this.validateSyntax(result),
             geometry: this.validateGeometry(result),
@@ -73,23 +84,26 @@ export class ValidatorAgent extends EventEmitter {
     }
 
     private validateSyntax(result: any): any {
+        // 🔥 Protection contre undefined
         return {
-            valid: result.validation?.syntax !== false,
-            errors: result.validation?.errors || [],
-            warnings: result.validation?.warnings || []
+            valid: result?.validation?.syntax !== false,
+            errors: result?.validation?.errors || [],
+            warnings: result?.validation?.warnings || []
         }
     }
 
     private validateGeometry(result: any): any {
-        const mesh = result.mesh
-        const isValid = mesh && mesh.vertices && mesh.faces
+        // 🔥 Protection contre undefined
+        const mesh = result?.mesh
+        const isValid = mesh && Array.isArray(mesh.vertices) && Array.isArray(mesh.faces) &&
+            mesh.vertices.length > 0 && mesh.faces.length > 0
 
         return {
             valid: isValid,
             vertices: mesh?.vertices?.length || 0,
             faces: mesh?.faces?.length || 0,
-            closed: true,
-            manifold: true
+            closed: isValid,
+            manifold: isValid
         }
     }
 
@@ -105,9 +119,9 @@ export class ValidatorAgent extends EventEmitter {
     private calculateScore(validation: any): number {
         let score = 0
 
-        if (validation.syntax.valid) score += 30
-        if (validation.geometry.valid) score += 40
-        if (validation.manufacturability.printable) score += 30
+        if (validation.syntax?.valid) score += 30
+        if (validation.geometry?.valid) score += 40
+        if (validation.manufacturability?.printable) score += 30
 
         return Math.min(100, score)
     }

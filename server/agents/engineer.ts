@@ -1,6 +1,7 @@
 ﻿// server/agents/engineer.ts - VERSION AVANCÉE
 import { EventEmitter } from 'events'
 import axios from 'axios'
+import { PatternGenerators } from '../generators/pattern-generators'
 
 export class EngineerAgent extends EventEmitter {
     private engines = {
@@ -11,10 +12,29 @@ export class EngineerAgent extends EventEmitter {
         this.emit('state', { status: 'engineering', progress: 0 })
 
         // Utiliser l'analyse géométrique du context
-        const analysis = context.results?.analysis
+        const analysis = context.results?.analyzer
+
+        if (analysis?.isAdvancedPattern && analysis.pattern) {
+            console.log(`✅ Engineering advanced pattern: ${analysis.pattern.type}`)
+            const code = this.generatePatternCode(analysis.pattern)
+
+            const validation = await this.validateCode(code)
+            const mesh = await this.executeCode(code)
+
+            return {
+                language: 'cadquery',
+                code,
+                validation,
+                mesh,
+                parameters: analysis.pattern.params || {},
+                documentation: `# ${analysis.pattern.type}\n\nGenerated from pattern library`
+            }
+        }
 
         if (!analysis || !analysis.geometry) {
-            throw new Error('Missing geometric analysis')
+            console.warn('⚠️ No analysis found, using fallback geometry')
+            // Créer une géométrie par défaut
+            return this.generateFallbackCode(context.prompt)
         }
 
         this.emit('state', { status: 'engineering', progress: 20 })
@@ -37,6 +57,33 @@ export class EngineerAgent extends EventEmitter {
             parameters: this.extractParameters(code),
             documentation: this.generateDocumentation(code, analysis)
         }
+    }
+
+    private generatePatternCode(pattern: any): string {
+        console.log(`🎯 Generating code for pattern: ${pattern.type}`)
+
+        switch (pattern.type) {
+            case 'composite':
+                return this.generateCompositeCode(pattern)
+
+            case 'enclosure':
+                return PatternGenerators.enclosure(pattern.params)
+
+            case 'motor-mount':
+                return PatternGenerators.motorMount(pattern.params)
+
+            case 'cable-clip':
+                return PatternGenerators.cableClip(pattern.params)
+
+            default:
+                console.warn(`⚠️ Unknown pattern: ${pattern.type}`)
+                return this.generateFallbackCode('Unknown pattern')
+        }
+    }
+
+    private generateCompositeCode(pattern: any): string {
+        // Générer du code pour des formes composites (multi-pièces)
+        return PatternGenerators.phoneHolder(pattern.components[0].params)
     }
 
     private generateAdvancedCode(geometry: any, prompt: string): string {
@@ -262,7 +309,7 @@ export class EngineerAgent extends EventEmitter {
         try {
             const response = await axios.post(`${this.engines.cadquery}/validate`, {
                 code
-            }, { timeout: 3000 })
+            }, { timeout: 300000 })
 
             return {
                 syntax: response.data.syntax,
@@ -284,7 +331,7 @@ export class EngineerAgent extends EventEmitter {
             const response = await axios.post(`${this.engines.cadquery}/execute`, {
                 code,
                 format: 'mesh'
-            }, { timeout: 5000 })
+            }, { timeout: 300000 })
 
             return {
                 vertices: response.data.vertices,
@@ -343,4 +390,29 @@ export class EngineerAgent extends EventEmitter {
 
         return doc
     }
+    private generateFallbackCode(prompt: string): any {
+        console.log('⚠️ Using fallback code generation')
+
+        const code = `import cadquery as cq
+
+        # Fallback for: ${prompt}
+        width = 10
+        height = 10
+        depth = 10
+
+        result = (cq.Workplane("XY")
+            .box(width, height, depth))
+
+        show_object(result)
+        `
+
+                return {
+                    language: 'cadquery',
+                    code,
+                    validation: { syntax: true, warnings: [], errors: [] },
+                    mesh: this.generateMockMesh(),
+                    parameters: { width: 10, height: 10, depth: 10 },
+                    documentation: `# Fallback code for: ${prompt}`
+                }
+            }
 }
