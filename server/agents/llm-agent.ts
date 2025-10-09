@@ -1,6 +1,7 @@
 ﻿// server/agents/llm-agent.ts
 import axios from 'axios'
 import { EventEmitter } from 'events'
+import { SpecializedPrompts } from '../prompts/specialized-prompts'
 
 export class LLMAgent extends EventEmitter {
     private ollamaUrl: string
@@ -39,32 +40,39 @@ export class LLMAgent extends EventEmitter {
     async generateCADCode(prompt: string, context?: any): Promise<string> {
         this.emit('state', { status: 'generating', progress: 0 })
 
-        console.log(`\n🧠 LLM: Generating code for: "${prompt}"`)
+        console.log(`\n🧠 Generating code for: "${prompt}"`)
+
+        // NOUVEAU: Sélectionner prompt spécialisé
+        let systemPrompt = ''
+        const lower = prompt.toLowerCase()
+
+        if (lower.includes('drug') || lower.includes('stent') || lower.includes('implant')) {
+            console.log('🏥 Using MEDICAL prompt')
+            systemPrompt = SpecializedPrompts.getMedicalPrompt(prompt)
+        }
+        else if (lower.includes('lattice') || lower.includes('gyroid') || lower.includes('voronoi')) {
+            console.log('🔲 Using LATTICE prompt')
+            systemPrompt = SpecializedPrompts.getLatticePrompt(prompt)
+        }
+        else {
+            console.log('📝 Using GENERAL prompt')
+            systemPrompt = SpecializedPrompts.getGeneralPrompt(prompt)
+        }
 
         try {
             if (!this.useAnthropic) {
-                return await this.generateWithOllama(prompt)
+                return await this.generateWithOllama(systemPrompt)
             } else {
-                return await this.generateWithAnthropic(prompt)
+                return await this.generateWithAnthropic(systemPrompt)
             }
         } catch (error: any) {
-            console.error('❌ Primary LLM failed:', error.message)
-
-            if (!this.useAnthropic && this.anthropicKey) {
-                console.log('🔄 Falling back to Anthropic...')
-                try {
-                    return await this.generateWithAnthropic(prompt)
-                } catch (anthropicError: any) {
-                    console.error('❌ Anthropic fallback failed:', anthropicError.message)
-                }
-            }
-
+            console.error('❌ LLM failed:', error.message)
             return this.generateFallback(prompt)
         }
     }
 
-    private async generateWithOllama(prompt: string): Promise<string> {
-        const systemPrompt = this.buildSystemPrompt(prompt)
+    private async generateWithOllama(systemPrompt: string): Promise<string> {
+        // systemPrompt est déjà construit
         const fullUrl = `${this.ollamaUrl}/api/generate`
 
         console.log(`\n📡 Ollama Request:`)
@@ -105,12 +113,10 @@ export class LLMAgent extends EventEmitter {
         }
     }
 
-    private async generateWithAnthropic(prompt: string): Promise<string> {
+    private async generateWithAnthropic(systemPrompt: string): Promise<string> {
         if (!this.anthropicKey) {
             throw new Error('Anthropic API key not configured')
         }
-
-        const systemPrompt = this.buildSystemPrompt(prompt)
 
         console.log(`\n📡 Anthropic Request:`)
         console.log(`  Model: claude-3-5-sonnet-20241022`)

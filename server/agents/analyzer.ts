@@ -3,56 +3,60 @@ import { EventEmitter } from 'events'
 import { NLPProcessor } from '../nlp/processor'
 import { DomainClassifier } from '../ml/classifier'
 import { AdvancedNLPProcessor } from '../nlp/advanced-processor'
+import { HierarchicalParser, ParsedGeometry } from '../nlp/hierarchical-parser'
+import { MedicalPatternGenerator } from '../generators/medical-patterns'
+import { LatticeGenerator } from '../generators/lattice-generator'
 
 export class AnalyzerAgent extends EventEmitter {
     private nlp: NLPProcessor
-    private advancedNlp: AdvancedNLPProcessor  // 🔥 NOUVEAU
+    private advancedNlp: AdvancedNLPProcessor
     private classifier: DomainClassifier
+    private hierarchicalParser: HierarchicalParser  // NOUVEAU
 
     constructor() {
         super()
         this.nlp = new NLPProcessor()
-        this.advancedNlp = new AdvancedNLPProcessor()  // 🔥 NOUVEAU
+        this.advancedNlp = new AdvancedNLPProcessor()
         this.classifier = new DomainClassifier()
+        this.hierarchicalParser = new HierarchicalParser()  // NOUVEAU
     }
 
     async analyze(prompt: string, context: any = {}): Promise<any> {
         this.emit('state', { status: 'analyzing', progress: 0 })
 
-        // 🔥 1. Essayer d'abord le pattern matching avancé
-        const advancedPattern = await this.advancedNlp.detectPattern(prompt)
-        if (advancedPattern) {
-            console.log('✅ Advanced pattern matched:', advancedPattern.type)
+        // NOUVEAU: Parser hiérarchique
+        const parsedGeometry = this.hierarchicalParser.parse(prompt)
+        console.log('✅ Parsed:', parsedGeometry.mainComponent.type)
+
+        this.emit('state', { status: 'analyzing', progress: 50 })
+
+        // Classification
+        const domain = await this.classifier.classify(prompt)
+
+        // Détecter patterns spécialisés
+        const pattern = this.detectPattern(prompt, parsedGeometry)
+
+        if (pattern) {
+            console.log('🎯 Pattern detected:', pattern.type)
+            this.emit('state', { status: 'complete', progress: 100 })
 
             return {
                 prompt,
-                pattern: advancedPattern,
-                isAdvancedPattern: true,  // 🔥 FLAG
-                domain: await this.classifier.classify(prompt),
+                domain,
+                pattern,
+                isSpecializedPattern: true,
                 complexity: { level: 'advanced', score: 7 }
             }
         }
 
-        // 2. Sinon, utiliser le NLP classique
+        // Fallback analyse classique
         const nlpResult = await this.nlp.process(prompt)
-        console.log('📊 NLP Result:', JSON.stringify(nlpResult, null, 2)) // ✅ AJOUT
-        this.emit('state', { status: 'analyzing', progress: 25 })
-
-        // 2. Classification du domaine
-        const domain = await this.classifier.classify(prompt)
-        console.log('📊 Domain:', domain) // ✅ AJOUT
-        this.emit('state', { status: 'analyzing', progress: 50 })
-
-        // 3. Décomposition géométrique
         const geometry = this.decomposeGeometry(nlpResult)
-        console.log('📊 Geometry:', JSON.stringify(geometry, null, 2)) // ✅ AJOUT
-        this.emit('state', { status: 'analyzing', progress: 75 })
-
-        // 4. Analyse des contraintes
         const constraints = this.extractConstraints(nlpResult, geometry)
-        this.emit('state', { status: 'analyzing', progress: 90 })
 
-        const result = {
+        this.emit('state', { status: 'complete', progress: 100 })
+
+        return {
             prompt,
             nlp: nlpResult,
             domain,
@@ -61,9 +65,59 @@ export class AnalyzerAgent extends EventEmitter {
             complexity: this.assessComplexity(geometry, constraints),
             recommendations: this.generateRecommendations(geometry, domain)
         }
+    }
 
-        this.emit('state', { status: 'complete', progress: 100 })
-        return result
+    // NOUVELLE MÉTHODE - Ajouter APRÈS analyze()
+    private detectPattern(prompt: string, parsed: ParsedGeometry): any | null {
+        const lower = prompt.toLowerCase()
+        const dims = parsed.dimensions
+
+        // MEDICAL
+        if (lower.includes('drug') && lower.includes('capsule')) {
+            return {
+                type: 'drug-delivery-capsule',
+                domain: 'medical',
+                generator: MedicalPatternGenerator.drugDeliveryCapsule,
+                params: {
+                    bodyLength: dims.get('length') || 20,
+                    bodyDiameter: dims.get('diameter') || 8,
+                    wallThickness: dims.get('thickness') || 1,
+                    channelCount: 12,
+                    channelDiameter: 0.5
+                }
+            }
+        }
+
+        if (lower.includes('stent')) {
+            return {
+                type: 'vascular-stent',
+                domain: 'medical',
+                generator: MedicalPatternGenerator.vascularStent,
+                params: {
+                    length: dims.get('length') || 25,
+                    diameter: dims.get('diameter') || 8,
+                    strutThickness: 0.3,
+                    rings: 8
+                }
+            }
+        }
+
+        // LATTICE
+        if (lower.includes('lattice') || lower.includes('gyroid')) {
+            return {
+                type: 'gyroid-lattice',
+                domain: 'lattice',
+                generator: LatticeGenerator.gyroid,
+                params: {
+                    size: dims.get('dim_x') || 50,
+                    unitCellSize: 5,
+                    thickness: 0.8,
+                    porosity: 0.7
+                }
+            }
+        }
+
+        return null
     }
 
     private decomposeGeometry(nlpResult: any): any {

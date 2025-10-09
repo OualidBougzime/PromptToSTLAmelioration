@@ -2,6 +2,9 @@
 import { EventEmitter } from 'events'
 import axios from 'axios'
 import { PatternGenerators } from '../generators/pattern-generators'
+import { MedicalPatternGenerator } from '../generators/medical-patterns'
+import { LatticeGenerator } from '../generators/lattice-generator'
+import { RoboticsPatternGenerator } from '../generators/robotics-patterns'
 
 export class EngineerAgent extends EventEmitter {
     private engines = {
@@ -11,41 +14,45 @@ export class EngineerAgent extends EventEmitter {
     async engineer(design: any, context: any): Promise<any> {
         this.emit('state', { status: 'engineering', progress: 0 })
 
-        // Utiliser l'analyse géométrique du context
         const analysis = context.results?.analyzer
 
-        if (analysis?.isAdvancedPattern && analysis.pattern) {
-            console.log(`✅ Engineering advanced pattern: ${analysis.pattern.type}`)
-            const code = this.generatePatternCode(analysis.pattern)
+        // NOUVEAU: Patterns spécialisés
+        if (analysis?.isSpecializedPattern && analysis.pattern) {
+            console.log(`✅ Using specialized pattern: ${analysis.pattern.type}`)
 
-            const validation = await this.validateCode(code)
-            const mesh = await this.executeCode(code)
+            try {
+                const code = analysis.pattern.generator(analysis.pattern.params)
 
-            return {
-                language: 'cadquery',
-                code,
-                validation,
-                mesh,
-                parameters: analysis.pattern.params || {},
-                documentation: `# ${analysis.pattern.type}\n\nGenerated from pattern library`
+                this.emit('state', { status: 'engineering', progress: 60 })
+                const validation = await this.validateCode(code)
+                this.emit('state', { status: 'engineering', progress: 80 })
+                const mesh = await this.executeCode(code)
+                this.emit('state', { status: 'complete', progress: 100 })
+
+                return {
+                    language: 'cadquery',
+                    code,
+                    validation,
+                    mesh,
+                    parameters: analysis.pattern.params,
+                    documentation: `# ${analysis.pattern.type}`
+                }
+            } catch (error: any) {
+                console.error('❌ Pattern failed:', error.message)
             }
         }
 
+        // Fallback: code existant
         if (!analysis || !analysis.geometry) {
-            console.warn('⚠️ No analysis found, using fallback geometry')
-            // Créer une géométrie par défaut
             return this.generateFallbackCode(context.prompt)
         }
 
         this.emit('state', { status: 'engineering', progress: 20 })
-
-        // Générer le code basé sur l'arbre géométrique
         const code = this.generateAdvancedCode(analysis.geometry, context.prompt)
         this.emit('state', { status: 'engineering', progress: 60 })
 
         const validation = await this.validateCode(code)
         this.emit('state', { status: 'engineering', progress: 80 })
-
         const mesh = await this.executeCode(code)
         this.emit('state', { status: 'complete', progress: 100 })
 
