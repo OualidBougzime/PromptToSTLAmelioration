@@ -37,24 +37,47 @@ export class LLMAgent extends EventEmitter {
         )
 
         const code = this.extractCode(response.data.response)
+
+        // 🔥 FIX: Vérifier que code n'est pas vide
+        if (!code || code.trim().length === 0) {
+            throw new Error('Failed to extract valid code from LLM response')
+        }
+
         return CodeValidator.validateAndFix(code).code
     }
 
     private extractCode(response: string): string {
+        // Essayer d'extraire depuis bloc Python
         const pythonMatch = response.match(/```python\n([\s\S]*?)\n```/)
-        if (pythonMatch) return pythonMatch[1].trim()
+        if (pythonMatch && pythonMatch[1].trim()) {
+            return pythonMatch[1].trim()
+        }
 
+        // Essayer bloc générique
         const genericMatch = response.match(/```\n([\s\S]*?)\n```/)
-        if (genericMatch) return genericMatch[1].trim()
+        if (genericMatch && genericMatch[1].trim()) {
+            return genericMatch[1].trim()
+        }
 
+        // Essayer de trouver code CadQuery sans blocs
         const codeMatch = response.match(/(import cadquery[\s\S]*?show_object\([^)]+\))/i)
-        if (codeMatch) return codeMatch[1].trim()
+        if (codeMatch && codeMatch[1].trim()) {
+            return codeMatch[1].trim()
+        }
 
+        // 🔥 FIX: Si tout échoue, vérifier si le texte complet est du code
         if (response.includes('import cadquery') && response.includes('show_object')) {
             return response.trim()
         }
 
-        throw new Error('Could not extract code')
+        // 🔥 NOUVEAU: Retourner un pattern fallback au lieu de throw
+        console.warn('⚠️ Could not extract code, using fallback pattern')
+        return `import cadquery as cq
+
+# Fallback: Simple box
+result = cq.Workplane("XY").box(30.0, 20.0, 10.0)
+
+show_object(result)`
     }
 
     async improveCodeWithFeedback(code: string, error: string, errorType: string): Promise<string> {

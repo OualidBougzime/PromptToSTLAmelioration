@@ -36,30 +36,34 @@ export class AgentOrchestrator extends EventEmitter {
             console.log(`\n🔄 Attempt ${attempt + 1}/${maxAttempts} - ${strategy}`)
 
             try {
-                // Générer code
+                // 🔥 FIX 1: Déclarer et initialiser code AVANT utilisation
                 let code: string
-
-                console.log('📝 Generated code preview:', code ? code.substring(0, 150) : 'EMPTY')
-                console.log('📊 Code length:', code?.length || 0)
-
-                // Après validation
-                console.log('🔍 Validation result:', validation)
-                if (!validation.syntax) {
-                    console.log('❌ Syntax errors:', validation.errors)
-                }
 
                 if (attempt === 0 && this.isSimplePrompt(prompt)) {
                     code = this.getProvenPattern(prompt)
+                    console.log('📝 Using proven pattern')
                 } else {
                     code = await this.llm.generateCADCode(prompt, {
                         strategy,
                         attempt: attempt + 1
                     })
+                    console.log('📝 Generated code from LLM')
                 }
 
-                // Valider
+                // 🔥 FIX 2: Vérifier que code existe
+                if (!code || code.trim().length === 0) {
+                    throw new Error('LLM returned empty code')
+                }
+
+                console.log('📊 Code length:', code.length)
+                console.log('📝 Code preview:', code.substring(0, 150))
+
+                // 🔥 FIX 3: Valider APRÈS avoir défini code
                 const validation = await this.engineer.validateCode(code)
+                console.log('🔍 Validation result:', validation)
+
                 if (!validation.syntax) {
+                    console.log('❌ Syntax errors:', validation.errors)
                     throw new Error('Syntax invalid')
                 }
 
@@ -72,10 +76,10 @@ export class AgentOrchestrator extends EventEmitter {
                     return this.buildSuccess(prompt, code, mesh, Date.now() - startTime, attempt + 1)
                 }
 
-                // Essayer de corriger
-                if (attempt < 2) {
-                    const errorType = this.categorizeError(mesh?.error || '')
-                    const fixedCode = await this.llm.improveCodeWithFeedback(code, mesh?.error || '', errorType)
+                // Si échec mais pas d'erreur critique, essayer de corriger
+                if (attempt < 2 && mesh?.error) {
+                    const errorType = this.categorizeError(mesh.error)
+                    const fixedCode = await this.llm.improveCodeWithFeedback(code, mesh.error, errorType)
                     const fixedMesh = await this.engineer.executeCode(fixedCode)
 
                     if (fixedMesh && fixedMesh.vertices && fixedMesh.vertices.length >= 100) {
@@ -86,6 +90,7 @@ export class AgentOrchestrator extends EventEmitter {
 
             } catch (error: any) {
                 console.log(`❌ Attempt ${attempt + 1} failed:`, error.message)
+                // Continue to next attempt
             }
         }
 
