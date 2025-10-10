@@ -3,26 +3,27 @@ import { EventEmitter } from 'events'
 import { LLMAgent } from './llm-agent'
 import { EngineerAgent } from './engineer'
 import { ValidatorAgent } from './optimizer'
+import { MetricsCollector } from '../monitoring/metrics'
 
 export class AgentOrchestrator extends EventEmitter {
     private llm: LLMAgent
     private engineer: EngineerAgent
     private validator: ValidatorAgent
+    private metrics: MetricsCollector
 
     constructor() {
         super()
 
-        // Seulement 3 agents nécessaires !
         this.llm = new LLMAgent()
         this.engineer = new EngineerAgent()
         this.validator = new ValidatorAgent()
+        this.metrics = new MetricsCollector() // 🔥 NOUVEAU
 
-        // Écouter les événements
         this.llm.on('state', (state) => {
             this.emit('agent:update', 'llm', state)
         })
 
-        console.log('✅ Orchestrator initialized (LLM-powered)')
+        console.log('✅ Orchestrator initialized with metrics')
     }
 
     async process(prompt: string, options: any = {}): Promise<any> {
@@ -31,15 +32,29 @@ export class AgentOrchestrator extends EventEmitter {
         const startTime = Date.now()
         let attempts = 0
         const maxAttempts = 3
-        let lastError = ''
+        const attemptHistory: Array<{ code: string, error?: string, errorType?: string }> = []
 
         while (attempts < maxAttempts) {
             attempts++
             console.log(`\n🔄 Attempt ${attempts}/${maxAttempts}`)
 
             try {
+                // Construire le prompt avec feedback des tentatives précédentes
+                let enhancedPrompt = prompt
+
+                if (attemptHistory.length > 0) {
+                    const lastAttempt = attemptHistory[attemptHistory.length - 1]
+
+                    enhancedPrompt = prompt + `\n\n⚠️ PREVIOUS ATTEMPT FAILED:
+Error: ${lastAttempt.error}
+Error Type: ${lastAttempt.errorType}
+
+Please fix this specific issue and regenerate the code.
+`
+                }
+
                 console.log('🧠 Generating code with LLM...')
-                const code = await this.llm.generateCADCode(prompt)
+                const code = await this.llm.generateCADCode(enhancedPrompt)
 
                 console.log('📝 Code preview:')
                 console.log(code.substring(0, 300) + '...\n')
@@ -48,11 +63,16 @@ export class AgentOrchestrator extends EventEmitter {
                 const validation = await this.engineer.validateCode(code)
 
                 if (!validation.syntax) {
-                    console.warn(`⚠️ Syntax errors found:`, validation.errors)
-                    lastError = validation.errors.join(', ')
+                    console.warn(`⚠️ Syntax errors:`, validation.errors)
+
+                    attemptHistory.push({
+                        code,
+                        error: validation.errors.join(', '),
+                        errorType: 'syntax'
+                    })
 
                     if (attempts < maxAttempts) {
-                        console.log('🔧 Attempting to fix syntax errors...')
+                        console.log('🔧 Attempting syntax fix...')
                         continue
                     }
                 }
@@ -60,11 +80,46 @@ export class AgentOrchestrator extends EventEmitter {
                 console.log('🚀 Executing code...')
                 const mesh = await this.engineer.executeCode(code)
 
-                // 🔥 NOUVEAU : Vérifier si l'exécution a réussi
+                // Vérifier si mesh valide
                 if (!mesh || !mesh.vertices || mesh.vertices.length < 100) {
-                    throw new Error('Execution failed: Invalid mesh or CadQuery error')
+                    const errorMsg = mesh?.error || 'Invalid mesh or CadQuery error'
+                    const errorType = this.categorizeError(errorMsg)
+
+                    console.log(`❌ Execution failed: ${errorType}`)
+
+                    attemptHistory.push({
+                        code,
+                        error: errorMsg,
+                        errorType
+                    })
+
+                    if (attempts < maxAttempts) {
+                        console.log(`🔧 Attempting to fix ${errorType} error...`)
+
+                        // Utiliser la nouvelle méthode avec feedback spécifique
+                        const fixedCode = await this.llm.improveCodeWithFeedback(code, errorMsg, errorType)
+
+                        // Réessayer avec le code corrigé
+                        try {
+                            const fixedMesh = await this.engineer.executeCode(fixedCode)
+
+                            if (fixedMesh && fixedMesh.vertices && fixedMesh.vertices.length >= 100) {
+                                console.log('✅ Fix successful!')
+
+                                const duration = Date.now() - startTime
+                                return this.buildSuccessResponse(prompt, fixedCode, fixedMesh, duration, attempts)
+                            }
+                        } catch (fixError) {
+                            console.log('⚠️ Fix attempt failed, continuing to next attempt...')
+                        }
+
+                        continue
+                    }
+
+                    throw new Error(errorMsg)
                 }
 
+                // Succès!
                 console.log('🔍 Validating result...')
                 const result = {
                     language: 'cadquery',
@@ -78,75 +133,139 @@ export class AgentOrchestrator extends EventEmitter {
                 const duration = Date.now() - startTime
                 console.log(`\n✨ Generation completed in ${duration}ms (${attempts} attempts)\n`)
 
-                return {
+                this.metrics.logGeneration({
                     prompt,
-                    timestamp: Date.now(),
+                    timestamp: startTime,
                     duration,
                     attempts,
-                    code: {
-                        language: 'cadquery',
-                        cadquery: code,
-                        python: code
-                    },
-                    model: {
-                        representations: {
-                            threejs: mesh
-                        }
-                    },
-                    validation: finalValidation,
-                    metadata: {
-                        source: 'llm',
-                        model: this.llm['ollamaModel']
-                    }
-                }
+                    success: true,
+                    complexity: this.estimateComplexity(prompt)
+                })
+
+                return this.buildSuccessResponse(prompt, code, mesh, duration, attempts)
 
             } catch (error: any) {
                 console.error(`❌ Attempt ${attempts} failed:`, error.message)
-                lastError = error.message
-
-                // 🔥 NOUVEAU : Si c'est une erreur CadQuery, essayer de corriger
-                if (error.message.includes('AttributeError') ||
-                    error.message.includes('has no attribute') ||
-                    error.response?.data?.error) {
-
-                    const cadqueryError = error.response?.data?.error || error.message
-                    console.log(`🔧 CadQuery error detected: ${cadqueryError}`)
-
-                    if (attempts < maxAttempts) {
-                        console.log('🔧 Asking LLM to fix the code...')
-
-                        // Récupérer le code précédent et demander une correction
-                        const previousCode = await this.llm.generateCADCode(prompt)
-                        const fixedCode = await this.llm.improveCode(previousCode, cadqueryError)
-
-                        // Réessayer avec le code corrigé (on continue la boucle)
-                        continue
-                    }
-                }
 
                 if (attempts >= maxAttempts) {
                     console.error('❌ All attempts failed, returning fallback')
-                    return this.generateFallbackResult(prompt, lastError)
+                    return this.generateFallbackResult(prompt, error.message, attemptHistory)
                 }
             }
         }
 
-        return this.generateFallbackResult(prompt, lastError)
+        return this.generateFallbackResult(prompt, 'Max attempts reached', attemptHistory)
     }
 
-    private generateFallbackResult(prompt: string, error: string): any {
+    // Ajouter ces méthodes helper APRÈS la méthode process()
+
+    private categorizeError(errorMsg: string): string {
+        const lower = errorMsg.toLowerCase()
+
+        if (lower.includes('brep') || lower.includes('command not done')) {
+            return 'geometric_invalid'
+        }
+        if (lower.includes('no pending wires') || lower.includes('wire')) {
+            return 'unclosed_wire'
+        }
+        if (lower.includes('fillet')) {
+            return 'fillet_error'
+        }
+        if (lower.includes('boolean') || lower.includes('union') || lower.includes('cut')) {
+            return 'boolean_operation'
+        }
+        if (lower.includes('timeout') || lower.includes('300')) {
+            return 'timeout'
+        }
+
+        return 'general'
+    }
+
+    private buildSuccessResponse(prompt: string, code: string, mesh: any, duration: number, attempts: number): any {
+        return {
+            prompt,
+            timestamp: Date.now(),
+            duration,
+            attempts,
+            code: {
+                language: 'cadquery',
+                cadquery: code,
+                python: code
+            },
+            model: {
+                representations: {
+                    threejs: mesh
+                }
+            },
+            validation: {
+                syntax: { valid: true, errors: [], warnings: [] },
+                geometry: {
+                    valid: true,
+                    vertices: mesh.vertices?.length || 0,
+                    faces: mesh.faces?.length || 0
+                },
+                score: 100
+            },
+            metadata: {
+                source: 'llm',
+                model: this.llm['ollamaModel']
+            }
+        }
+    }
+
+    private estimateComplexity(prompt: string): number {
+        let score = 1
+        const lower = prompt.toLowerCase()
+
+        // Lattice = very complex
+        if (lower.includes('lattice') || lower.includes('gyroid')) score += 3
+
+        // Medical = complex
+        if (lower.includes('stent') || lower.includes('actuator')) score += 2
+
+        // Features add complexity
+        const features = ['fillet', 'chamfer', 'hole', 'array', 'pattern']
+        features.forEach(f => {
+            if (lower.includes(f)) score += 1
+        })
+
+        return Math.min(score, 10)
+    }
+
+    // Ajouter endpoint pour voir les stats
+    getMetrics() {
+        return this.metrics.getStats()
+    }
+
+    getRecentFailures() {
+        return this.metrics.getRecentFailures()
+    }
+
+    private generateFallbackResult(prompt: string, error: string, attemptHistory: any[]): any {
         const fallbackCode = `import cadquery as cq
 
 # Fallback due to error: ${error}
-result = cq.Workplane("XY").box(10, 10, 10)
+# All ${attemptHistory.length} attempts failed
+
+result = cq.Workplane("XY").box(10.0, 10.0, 10.0)
 show_object(result)
 `
+        // Log failed attempt
+        this.metrics.logGeneration({
+            prompt,
+            timestamp: Date.now(),
+            duration: 0,
+            attempts: attemptHistory.length,
+            success: false,
+            errorType: 'all_attempts_failed',
+            complexity: this.estimateComplexity(prompt)
+        })
 
         return {
             prompt,
             timestamp: Date.now(),
             duration: 0,
-            attempts: 0,
+            attempts: attemptHistory.length,
             code: {
                 language: 'cadquery',
                 cadquery: fallbackCode,
@@ -178,7 +297,8 @@ show_object(result)
             },
             metadata: {
                 source: 'fallback',
-                error
+                error,
+                attemptHistory
             }
         }
     }

@@ -6,6 +6,7 @@ import { AdvancedNLPProcessor } from '../nlp/advanced-processor'
 import { HierarchicalParser, ParsedGeometry } from '../nlp/hierarchical-parser'
 import { MedicalPatternGenerator } from '../generators/medical-patterns'
 import { LatticeGenerator } from '../generators/lattice-generator'
+import { OptimizedPatterns } from '../generators/optimized-patterns'
 
 export class AnalyzerAgent extends EventEmitter {
     private nlp: NLPProcessor
@@ -67,7 +68,6 @@ export class AnalyzerAgent extends EventEmitter {
         }
     }
 
-    // NOUVELLE MÉTHODE - Ajouter APRÈS analyze()
     private detectPattern(prompt: string, parsed: ParsedGeometry): any | null {
         const lower = prompt.toLowerCase()
         const dims = parsed.dimensions
@@ -102,15 +102,47 @@ export class AnalyzerAgent extends EventEmitter {
             }
         }
 
-        // LATTICE
+        // 🔥 NOUVEAU: McKibben actuator avec pattern optimisé
+        if (lower.includes('mckibben') ||
+            (lower.includes('actuator') && lower.includes('braided'))) {
+            return {
+                type: 'mckibben-actuator',
+                domain: 'robotics',
+                generator: OptimizedPatterns.mckibbenActuator,
+                params: {
+                    length: dims.get('length') || 100,
+                    diameter: dims.get('diameter') || 20,
+                    filamentCount: 12, // Optimisé (au lieu de 45)
+                    filamentThickness: 0.5,
+                    helixAngle: 30
+                }
+            }
+        }
+
+        // 🔥 NOUVEAU: Wrist splint avec pattern optimisé
+        if (lower.includes('splint') || lower.includes('brace')) {
+            return {
+                type: 'wrist-splint',
+                domain: 'medical',
+                generator: OptimizedPatterns.wristSplint,
+                params: {
+                    length: dims.get('length') || 180,
+                    width: dims.get('width') || 70,
+                    thickness: 3,
+                    palmAngle: 15
+                }
+            }
+        }
+
+        // LATTICE - 🔥 Utiliser pattern optimisé
         if (lower.includes('lattice') || lower.includes('gyroid')) {
             return {
                 type: 'gyroid-lattice',
                 domain: 'lattice',
-                generator: LatticeGenerator.gyroid,
+                generator: OptimizedPatterns.gyroidLattice, // Pattern optimisé!
                 params: {
                     size: dims.get('dim_x') || 50,
-                    unitCellSize: 5,
+                    unitCellSize: 10.0, // IMPORTANT: min 10mm pour éviter timeout
                     thickness: 0.8,
                     porosity: 0.7
                 }

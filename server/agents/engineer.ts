@@ -5,6 +5,8 @@ import { PatternGenerators } from '../generators/pattern-generators'
 import { MedicalPatternGenerator } from '../generators/medical-patterns'
 import { LatticeGenerator } from '../generators/lattice-generator'
 import { RoboticsPatternGenerator } from '../generators/robotics-patterns'
+import { CodeValidator } from '../validation/code-validator'
+
 
 export class EngineerAgent extends EventEmitter {
     private engines = {
@@ -64,6 +66,35 @@ export class EngineerAgent extends EventEmitter {
             parameters: this.extractParameters(code),
             documentation: this.generateDocumentation(code, analysis)
         }
+    }
+
+    private estimateTimeout(prompt: string): number {
+        let timeout = 60 // Base: 1 minute
+
+        const lower = prompt.toLowerCase()
+
+        // Lattice structures need much more time
+        if (lower.includes('lattice') || lower.includes('gyroid') ||
+            lower.includes('voronoi') || lower.includes('scaffold')) {
+            timeout += 60
+        }
+
+        // Large dimensions suggest complexity
+        const numbers = prompt.match(/\d+/g)
+        if (numbers) {
+            const maxNumber = Math.max(...numbers.map(Number))
+            if (maxNumber > 100) {
+                timeout += 30
+            }
+        }
+
+        // Multiple features add complexity
+        const featureWords = ['hole', 'fillet', 'chamfer', 'array', 'pattern', 'union', 'cut']
+        const featureCount = featureWords.filter(w => lower.includes(w)).length
+        timeout += featureCount * 10
+
+        // Cap at 3 minutes
+        return Math.min(timeout, 180)
     }
 
     private generatePatternCode(pattern: any): string {
@@ -313,32 +344,55 @@ export class EngineerAgent extends EventEmitter {
     }
 
     private async validateCode(code: string): Promise<any> {
+        // 🔥 VALIDATION PRÉ-EXÉCUTION
+        const preValidation = CodeValidator.validateCadQueryCode(code)
+
+        if (!preValidation.valid) {
+            console.warn('⚠️ Pre-validation failed:', preValidation.errors)
+            return {
+                syntax: false,
+                warnings: preValidation.warnings,
+                errors: preValidation.errors
+            }
+        }
+
+        if (preValidation.warnings.length > 0) {
+            console.warn('⚠️ Pre-validation warnings:', preValidation.warnings)
+        }
+
+        // Validation CadQuery server
         try {
             const response = await axios.post(`${this.engines.cadquery}/validate`, {
                 code
-            }, { timeout: 300000 })
+            }, { timeout: 10000 })
 
             return {
                 syntax: response.data.syntax,
-                warnings: response.data.warnings || [],
+                warnings: [...preValidation.warnings, ...(response.data.warnings || [])],
                 errors: response.data.errors || []
             }
         } catch (error: any) {
-            console.warn('⚠️ Validation unavailable:', error.message)
+            console.warn('⚠️ CadQuery validation unavailable:', error.message)
             return {
-                syntax: true,
-                warnings: ['Validation service unavailable'],
-                errors: []
+                syntax: preValidation.valid,
+                warnings: preValidation.warnings,
+                errors: preValidation.errors
             }
         }
     }
 
-    private async executeCode(code: string): Promise<any> {
+    private async executeCode(code: string, promptForTimeout?: string): Promise<any> {
         try {
+            // Estimer timeout basé sur le prompt
+            const timeout = promptForTimeout ? this.estimateTimeout(promptForTimeout) : 120
+
+            console.log(`⏱️ Estimated timeout: ${timeout}s`)
+
             const response = await axios.post(`${this.engines.cadquery}/execute`, {
                 code,
-                format: 'mesh'
-            }, { timeout: 300000 })
+                format: 'mesh',
+                timeout // Passer le timeout au serveur Python
+            }, { timeout: timeout * 1000 + 10000 }) // +10s de marge pour Node
 
             return {
                 vertices: response.data.vertices,
@@ -346,8 +400,18 @@ export class EngineerAgent extends EventEmitter {
                 normals: response.data.normals || []
             }
         } catch (error: any) {
-            console.warn(`⚠️ CadQuery engine not available: ${error.message}`)
-            return this.generateMockMesh()
+            console.warn(`⚠️ CadQuery engine error: ${error.message}`)
+
+            // Retourner l'erreur avec détails
+            if (error.response?.data) {
+                return {
+                    error: error.response.data.error,
+                    errorType: error.response.data.error_type,
+                    suggestion: error.response.data.suggestion
+                }
+            }
+
+            return { error: error.message }
         }
     }
 

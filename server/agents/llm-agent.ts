@@ -42,21 +42,38 @@ export class LLMAgent extends EventEmitter {
 
         console.log(`\n🧠 Generating code for: "${prompt}"`)
 
-        // NOUVEAU: Sélectionner prompt spécialisé
+        // Sélectionner prompt spécialisé avec contexte
         let systemPrompt = ''
         const lower = prompt.toLowerCase()
 
+        // 🔥 AMÉLIORATION: Ajouter contexte d'échecs précédents
+        let contextualHints = ''
+        if (context?.previousErrors) {
+            contextualHints = `\n\n⚠️ LEARN FROM PREVIOUS ERRORS:\n`
+            context.previousErrors.forEach((err: any, idx: number) => {
+                contextualHints += `${idx + 1}. ${err.type}: ${err.message}\n`
+            })
+        }
+
         if (lower.includes('drug') || lower.includes('stent') || lower.includes('implant')) {
             console.log('🏥 Using MEDICAL prompt')
-            systemPrompt = SpecializedPrompts.getMedicalPrompt(prompt)
+            systemPrompt = SpecializedPrompts.getMedicalPrompt(prompt) + contextualHints
         }
         else if (lower.includes('lattice') || lower.includes('gyroid') || lower.includes('voronoi')) {
             console.log('🔲 Using LATTICE prompt')
-            systemPrompt = SpecializedPrompts.getLatticePrompt(prompt)
+            systemPrompt = SpecializedPrompts.getLatticePrompt(prompt) + contextualHints
+        }
+        else if (lower.includes('actuator') || lower.includes('mckibben') || lower.includes('soft robot')) {
+            console.log('🤖 Using ROBOTICS prompt')
+            systemPrompt = this.getRoboticsPrompt(prompt) + contextualHints
+        }
+        else if (lower.includes('splint') || lower.includes('brace') || lower.includes('orthopedic')) {
+            console.log('🦴 Using ORTHOPEDIC prompt')
+            systemPrompt = this.getOrthopedicPrompt(prompt) + contextualHints
         }
         else {
             console.log('📝 Using GENERAL prompt')
-            systemPrompt = SpecializedPrompts.getGeneralPrompt(prompt)
+            systemPrompt = SpecializedPrompts.getGeneralPrompt(prompt) + contextualHints
         }
 
         try {
@@ -330,4 +347,280 @@ Return the complete, fixed code wrapped in \`\`\`python blocks:`
             return code  // Retourner le code original
         }
     }
+
+    // Ajouter APRÈS la méthode improveCode() existante
+
+    async improveCodeWithFeedback(code: string, error: string, errorType: string): Promise<string> {
+        console.log(`🔧 LLM: Attempting to fix ${errorType} error...`)
+
+        let specificGuidance = ''
+
+        // Guidance spécifique selon le type d'erreur
+        switch (errorType) {
+            case 'geometric_invalid':
+                specificGuidance = `
+ERROR TYPE: Geometric operation failed (BRep error)
+
+COMMON CAUSES:
+1. Fillet radius too large: Ensure fillet radius < wall thickness
+2. Invalid boolean operation: Shapes don't overlap properly
+3. Near-zero dimensions: All dimensions must be positive floats
+
+FIXES:
+- Check all fillet operations: radius must be smaller than adjacent feature
+- For boolean operations, ensure shapes actually intersect
+- Convert all numbers to floats: 10.0 not 10
+- Add tolerance to unions: .union(other, tol=0.0001)
+`
+                break
+
+            case 'unclosed_wire':
+                specificGuidance = `
+ERROR TYPE: Wire is not closed
+
+FIX: Add .close() after all 2D sketch operations
+Example:
+BAD:  .lineTo(10, 0).lineTo(10, 10).lineTo(0, 10)
+GOOD: .lineTo(10, 0).lineTo(10, 10).lineTo(0, 10).close()
+`
+                break
+
+            case 'fillet_error':
+                specificGuidance = `
+ERROR TYPE: Fillet operation failed
+
+CAUSE: Fillet radius is too large for the edge
+FIX: Reduce fillet radius to < half of smallest adjacent dimension
+Example: For 5mm wall, use .fillet(2.0) maximum
+`
+                break
+
+            case 'boolean_operation':
+                specificGuidance = `
+ERROR TYPE: Boolean operation (union/cut) failed
+
+FIXES:
+1. Add tolerance: .union(other, tol=0.0001)
+2. Use .fuse() instead of .union()
+3. Ensure shapes actually overlap/intersect
+4. Check that all dimensions are positive floats
+`
+                break
+
+            case 'timeout':
+                specificGuidance = `
+ERROR TYPE: Execution timed out
+
+CAUSE: Too many boolean operations or small lattice cells
+
+FIXES:
+1. For lattices: Increase unit_cell_size to 10.0mm minimum
+2. Reduce number of cells: max 10x10x10
+3. Simplify geometry: fewer features
+4. Use arrays instead of loops
+`
+                break
+
+            default:
+                specificGuidance = 'Check CadQuery syntax and ensure all parameters are floats'
+        }
+
+        const fixPrompt = `This CadQuery code has an error. Fix it and return ONLY the corrected code.
+
+${specificGuidance}
+
+ACTUAL ERROR: ${error}
+
+ORIGINAL CODE:
+${code}
+
+REQUIREMENTS:
+1. Fix the specific error mentioned above
+2. Ensure ALL numbers are floats (10.0 not 10)
+3. Start with: import cadquery as cq
+4. End with: show_object(result)
+5. Keep the overall structure but fix the issue
+
+Return the complete, fixed code wrapped in \`\`\`python blocks:`
+
+        try {
+            if (!this.useAnthropic) {
+                const response = await axios.post(
+                    `${this.ollamaUrl}/api/generate`,
+                    {
+                        model: this.ollamaModel,
+                        prompt: fixPrompt,
+                        stream: false,
+                        options: {
+                            temperature: 0.2,
+                            num_predict: 1000
+                        }
+                    },
+                    { timeout: 60000 }
+                )
+
+                console.log('✅ Fix attempt completed')
+                return this.extractCode(response.data.response)
+            } else {
+                const response = await axios.post(
+                    'https://api.anthropic.com/v1/messages',
+                    {
+                        model: 'claude-3-5-sonnet-20241022',
+                        max_tokens: 1500,
+                        messages: [{ role: 'user', content: fixPrompt }]
+                    },
+                    {
+                        headers: {
+                            'x-api-key': this.anthropicKey!,
+                            'anthropic-version': '2023-06-01',
+                            'content-type': 'application/json'
+                        },
+                        timeout: 30000
+                    }
+                )
+
+                console.log('✅ Fix attempt completed')
+                return this.extractCode(response.data.content[0].text)
+            }
+        } catch (error: any) {
+            console.error('❌ Could not fix code:', error.message)
+            return code
+        }
+    }
+    private getRoboticsPrompt(prompt: string): string {
+        return `You are an expert CadQuery programmer for SOFT ROBOTICS and ACTUATORS.
+
+🎯 KEY PRINCIPLES FOR SOFT ROBOTICS:
+1. Smooth surfaces (no sharp edges)
+2. Flexible sections with thin walls (0.5-2mm)
+3. Actuatable chambers or bellows
+4. Avoid excessive boolean operations (causes timeout)
+
+✅ OPTIMIZED PATTERN - Simplified McKibben Actuator:
+\`\`\`python
+import cadquery as cq
+import math
+
+# Parameters
+length = 100.0
+diameter = 20.0
+filament_count = 12  # Reduced for performance
+filament_thickness = 0.5
+
+radius = diameter / 2.0
+
+# Main body
+body = cq.Workplane("XY").circle(radius).extrude(length)
+
+# Bladder cavity
+bladder = cq.Workplane("XY").circle(radius - 2.0).extrude(length - 4.0).translate((0, 0, 2.0))
+body = body.cut(bladder)
+
+# Helical filaments (use sweep, not individual segments)
+pitch = length / 3.0
+
+for i in range(filament_count):
+    angle_offset = (360.0 / filament_count) * i
+    
+    # Create helical path (30 segments)
+    points = []
+    for j in range(31):
+        t = j / 30.0
+        z = t * length
+        angle = angle_offset + (t * 360.0 * 3.0)
+        x = radius * math.cos(math.radians(angle))
+        y = radius * math.sin(math.radians(angle))
+        points.append((x, y, z))
+    
+    path = cq.Workplane("XY").spline(points)
+    filament = cq.Workplane("YZ").circle(filament_thickness/2.0).sweep(path)
+    body = body.union(filament)
+
+# End caps
+cap = cq.Workplane("XY").circle(radius + 1.0).extrude(3.0)
+body = body.union(cap)
+body = body.union(cap.translate((0, 0, length - 3.0)))
+
+show_object(body)
+\`\`\`
+
+⚠️ PERFORMANCE TIPS:
+- Limit filament count: 12-16 maximum (not 45!)
+- Use sweep() for helical paths, not loops
+- Simplify cavity geometry
+- Avoid small features (<0.5mm)
+
+Now generate code for: "${prompt}"
+
+Return ONLY Python code optimized for performance.`
+    }
+
+    private getOrthopedicPrompt(prompt: string): string {
+        return `You are an expert CadQuery programmer for ORTHOPEDIC DEVICES.
+
+🎯 KEY PRINCIPLES FOR ORTHOPEDICS:
+1. Anatomically curved surfaces (loft or spline-based)
+2. Ventilation holes for comfort
+3. Strap/mounting points
+4. Smooth edges (minimum 1mm fillet)
+
+✅ OPTIMIZED PATTERN - Wrist Splint:
+\`\`\`python
+import cadquery as cq
+
+# Parameters
+length = 180.0
+width = 70.0
+thickness = 3.0
+palm_angle = 15.0
+
+# Base (forearm section)
+base = cq.Workplane("XY").box(length * 0.6, width, thickness)
+
+# Palm section (angled)
+palm = (cq.Workplane("XY")
+    .workplane(offset=thickness)
+    .box(length * 0.4, width, thickness * 4.0)
+    .rotate((0, 0, 0), (1, 0, 0), palm_angle)
+    .translate((length * 0.25, 0, 0)))
+
+result = base.union(palm)
+
+# Ventilation holes
+result = (result
+    .faces(">Z")
+    .workplane()
+    .rarray(15.0, 15.0, 6, 3)
+    .circle(3.0)
+    .cutThruAll())
+
+# Strap slots
+for i in range(3):
+    slot_x = -length * 0.25 + i * length * 0.25
+    slot = (cq.Workplane("XY")
+        .center(slot_x, 0)
+        .rect(8.0, width * 0.9)
+        .cutThruAll())
+    result = result.cut(slot)
+
+# Smooth all edges
+try:
+    result = result.edges().fillet(1.0)
+except:
+    pass
+
+show_object(result)
+\`\`\`
+
+⚠️ IMPORTANT:
+- Use simple geometry (avoid complex lofts if possible)
+- Large ventilation holes (5mm+) for performance
+- Limit fillet operations
+- Test printability (no overhangs >45°)
+
+Now generate code for: "${prompt}"
+
+Return ONLY Python code.`
+    }
+
 }

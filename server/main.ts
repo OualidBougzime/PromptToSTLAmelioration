@@ -115,6 +115,35 @@ app.post('/api/export-stl', async (req, res) => {
     }
 })
 
+// 🔥 NOUVEAUX ENDPOINTS DE MONITORING
+
+app.get('/api/metrics', (req, res) => {
+    try {
+        const metrics = orchestrator.getMetrics()
+        res.json(metrics)
+    } catch (error: any) {
+        res.status(500).json({ error: error.message })
+    }
+})
+
+app.get('/api/metrics/failures', (req, res) => {
+    try {
+        const failures = orchestrator.getRecentFailures()
+        res.json(failures)
+    } catch (error: any) {
+        res.status(500).json({ error: error.message })
+    }
+})
+
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        timestamp: Date.now(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage()
+    })
+})
+
 const PORT = process.env.PORT || 8787
 httpServer.listen(PORT, () => {
     console.log(`
