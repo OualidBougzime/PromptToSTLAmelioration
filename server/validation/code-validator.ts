@@ -1,141 +1,220 @@
-﻿// server/validation/code-validator.ts
+﻿// server/validation/code-validator.ts - VERSION SAFE FINALE
 
 export class CodeValidator {
-    /**
-     * Valide le code CadQuery avant exécution
-     */
-    static validateCadQueryCode(code: string): { valid: boolean; errors: string[]; warnings: string[] } {
+
+    static validateAndFix(code: string): {
+        code: string
+        valid: boolean
+        errors: string[]
+        warnings: string[]
+        fixed: boolean
+        fixes: string[]
+    } {
+        let fixedCode = code
+        let fixed = false
+        const fixes: string[] = []
         const errors: string[] = []
         const warnings: string[] = []
 
-        // 1. Vérifier imports
-        if (!code.includes('import cadquery as cq')) {
-            errors.push('Missing: import cadquery as cq')
+        // ========================================
+        // AUTO-FIXES
+        // ========================================
+
+        // 1. Fix angleDegrees
+        if (fixedCode.includes('angleDegrees')) {
+            fixedCode = fixedCode.replace(/\.workplane\(angleDegrees\s*=\s*(\d+)\)/g, '.workplane(offset=$1.0)')
+            fixed = true
+            fixes.push('angleDegrees → offset')
         }
 
-        // 2. Vérifier show_object
-        if (!code.includes('show_object(')) {
-            errors.push('Missing: show_object(result)')
+        // 2. Fix angle=
+        if (fixedCode.includes('angle=')) {
+            fixedCode = fixedCode.replace(/\.rotate\(angle\s*=\s*(\d+)\)/g, '.rotate((0,0,0), (0,0,1), $1)')
+            fixed = true
+            fixes.push('rotate(angle=...) → rotate(...)')
         }
 
-        // 3. Détecter nombres entiers (devrait être float)
-        const integerPattern = /=\s*(\d{1,3})(?![.\d])/g
-        const integers = code.match(integerPattern)
-        if (integers && integers.length > 5) {
-            warnings.push(`Found ${integers.length} integer literals. Should use floats: 10.0 not 10`)
-        }
+        // 3. Fix integers → floats (VERSION SAFE)
+        let integerCount = 0
+        const lines = fixedCode.split('\n')
+        const processedLines: string[] = []
 
-        // 4. Détecter fillet potentiellement dangereux
-        const filletPattern = /\.fillet\((\d+)\)/g
-        const fillets = Array.from(code.matchAll(filletPattern))
-        fillets.forEach(match => {
-            const radius = parseInt(match[1])
-            if (radius > 10) {
-                warnings.push(`Large fillet radius (${radius}mm) may fail. Ensure it's < wall thickness`)
+        for (const line of lines) {
+            // Skip comments, imports, ranges
+            if (line.trim().startsWith('#') ||
+                line.includes('import') ||
+                line.includes('range(') ||
+                /\[\d+\]/.test(line)) {
+                processedLines.push(line)
+                continue
             }
-        })
 
-        // 5. Détecter boucles excessives
-        const forLoopPattern = /for\s+\w+\s+in\s+range\((\d+)\)/g
-        const loops = Array.from(code.matchAll(forLoopPattern))
-        loops.forEach(match => {
-            const iterations = parseInt(match[1])
-            if (iterations > 100) {
-                warnings.push(`Large loop (${iterations} iterations) may cause timeout`)
+            // Fix simple variable assignments: var = 25
+            const assignMatch = line.match(/^(\s*)(\w+)\s*=\s*(\d+)\s*$/)
+            if (assignMatch) {
+                const [, indent, varName, value] = assignMatch
+                processedLines.push(`${indent}${varName} = ${value}.0`)
+                integerCount++
+                continue
             }
-        })
 
-        // 6. Vérifier utilisation .close() pour wires
-        if (code.includes('.lineTo(') || code.includes('.threePointArc(')) {
-            if (!code.includes('.close()')) {
-                warnings.push('2D sketch operations detected. Consider adding .close() to ensure wires are closed')
-            }
-        }
-
-        // 7. Détecter patterns dangereux
-        if (code.includes('.sphere().faces(')) {
-            errors.push('Dangerous pattern: .sphere().faces() causes errors. Use .sphere().translate() instead')
-        }
-
-        // 8. Vérifier usage correct de .loft()
-        if (code.includes('.loft()')) {
-            // Compter le nombre de .workplane() ou .circle() avant .loft()
-            const beforeLoft = code.substring(0, code.indexOf('.loft()'))
-            const workplaneCount = (beforeLoft.match(/\.workplane\(/g) || []).length
-            const circleCount = (beforeLoft.match(/\.circle\(/g) || []).length
-
-            if (workplaneCount < 2 && circleCount < 2) {
-                errors.push('CRITICAL: .loft() requires at least 2 sections. Add more .workplane().circle() calls before .loft()')
-            }
-        }
-
-        // 9. Détecter pattern dangereux : sections list
-        if (code.includes('sections = []') || code.includes('sections.append')) {
-            warnings.push('Detected manual section management. Use workplane chain instead: .circle().workplane(offset=z).circle().loft()')
-        }
-
-        // 10. Détecter tentative d'extrusion sur wire 3D
-        if (code.includes('.moveTo(') && code.includes('.extrude(')) {
-            const hasComplexPath = code.includes('math.cos') || code.includes('math.sin')
-            if (hasComplexPath) {
-                warnings.push('Complex 3D path detected. Ensure wire is planar before .extrude(). For stents, use individual struts instead.')
-            }
-        }
-
-        // 11. Détecter paramètres CadQuery obsolètes
-        const obsoleteParams = ['angleDegrees', 'angle=', 'centerOption']
-        obsoleteParams.forEach(param => {
-            if (code.includes(param)) {
-                errors.push(`CRITICAL: Parameter '${param}' is not supported in CadQuery 2.4. Use correct API.`)
-            }
-        })
-
-        // 12. Vérifier syntaxe .rotate()
-        if (code.includes('.rotate(')) {
-            const rotatePattern = /\.rotate\([^)]{0,20}\)/g
-            const rotates = code.match(rotatePattern) || []
-            rotates.forEach(rotate => {
-                // Correct: .rotate((0,0,0), (0,0,1), 45)
-                // Wrong: .rotate(angle=45)
-                if (rotate.includes('angle=')) {
-                    errors.push('CRITICAL: .rotate() syntax error. Use: .rotate((0,0,0), (0,0,1), 45)')
+            // Fix arithmetic: var = 8 / 2
+            const arithmeticMatch = line.match(/^(\s*)(\w+)\s*=\s*(.+)$/)
+            if (arithmeticMatch) {
+                const [, indent, varName, expression] = arithmeticMatch
+                // Replace standalone integers in expression
+                const fixedExpr = expression.replace(/\b(\d+)\b/g, (match) => {
+                    // Don't fix if already followed by .
+                    if (expression.includes(`${match}.`)) return match
+                    return `${match}.0`
+                })
+                if (fixedExpr !== expression) {
+                    processedLines.push(`${indent}${varName} = ${fixedExpr}`)
+                    integerCount++
+                    continue
                 }
-            })
+            }
+
+            processedLines.push(line)
+        }
+
+        if (integerCount > 0) {
+            fixedCode = processedLines.join('\n')
+            fixed = true
+            fixes.push(`${integerCount} integers → floats`)
+        }
+
+        // ========================================
+        // VALIDATIONS
+        // ========================================
+
+        if (!fixedCode.includes('import cadquery as cq')) {
+            errors.push('CRITICAL: Missing "import cadquery as cq"')
+        }
+
+        if (!fixedCode.includes('show_object(')) {
+            errors.push('CRITICAL: Missing "show_object(result)"')
+        }
+
+        // Paramètres invalides
+        if (/centerOption/i.test(fixedCode)) {
+            errors.push('CRITICAL: Invalid parameter "centerOption"')
+        }
+
+        // Patterns dangereux
+        if (/\.sphere\([^)]*\)\.faces\(/i.test(fixedCode)) {
+            errors.push('CRITICAL: .sphere().faces() pattern - use .sphere().translate()')
+        }
+
+        // Loft validation
+        if (fixedCode.includes('.loft()')) {
+            const loftIndex = fixedCode.indexOf('.loft()')
+            const beforeLoft = fixedCode.substring(Math.max(0, loftIndex - 500), loftIndex)
+            const shapeCount = (beforeLoft.match(/\.circle\(|\.rect\(/g) || []).length
+
+            if (shapeCount < 2) {
+                errors.push('CRITICAL: .loft() requires at least 2 sections')
+            }
+        }
+
+        // 3D wire extrusion
+        if (fixedCode.includes('.extrude(') &&
+            fixedCode.includes('math.cos') &&
+            fixedCode.includes('math.sin')) {
+            warnings.push('WARNING: 3D path with extrude - use individual struts')
+        }
+
+        // Fillet check
+        const filletPattern = /\.fillet\((\d+(?:\.\d+)?)\)/g
+        let match
+        while ((match = filletPattern.exec(fixedCode)) !== null) {
+            const radius = parseFloat(match[1])
+            if (radius > 10) {
+                warnings.push(`WARNING: Large fillet (${radius}mm) may fail`)
+            }
+        }
+
+        // Complexity
+        const complexity = this.analyzeComplexity(fixedCode)
+        if (complexity.score > 8) {
+            warnings.push(`WARNING: High complexity (${complexity.score}/10)`)
         }
 
         return {
+            code: fixedCode,
             valid: errors.length === 0,
             errors,
-            warnings
+            warnings,
+            fixed,
+            fixes
         }
     }
 
-    /**
-     * Estime le temps d'exécution
-     */
+    private static analyzeComplexity(code: string): { score: number, factors: any } {
+        let score = 0
+        const factors: any = {}
+
+        factors.unions = (code.match(/\.union\(/g) || []).length
+        factors.cuts = (code.match(/\.cut\(/g) || []).length
+        score += (factors.unions + factors.cuts) * 0.5
+
+        factors.lofts = (code.match(/\.loft\(/g) || []).length
+        score += factors.lofts * 2
+
+        factors.fillets = (code.match(/\.fillet\(/g) || []).length
+        score += factors.fillets * 1
+
+        return {
+            score: Math.min(10, Math.round(score)),
+            factors
+        }
+    }
+
     static estimateExecutionTime(code: string): number {
-        let timeEstimate = 5 // Base: 5 seconds
+        const complexity = this.analyzeComplexity(code)
+        return Math.min(180, 5 + complexity.score * 5)
+    }
 
-        // Count operations
-        const unionCount = (code.match(/\.union\(/g) || []).length
-        const cutCount = (code.match(/\.cut\(/g) || []).length
-        const filletCount = (code.match(/\.fillet\(/g) || []).length
+    static validateCadQueryCode(code: string): {
+        valid: boolean
+        errors: string[]
+        warnings: string[]
+    } {
+        const result = this.validateAndFix(code)
+        return {
+            valid: result.valid,
+            errors: result.errors,
+            warnings: result.warnings
+        }
+    }
 
-        timeEstimate += unionCount * 2
-        timeEstimate += cutCount * 2
-        timeEstimate += filletCount * 1
+    static generateValidationReport(code: string): string {
+        const result = this.validateAndFix(code)
+        const complexity = this.analyzeComplexity(result.code)
 
-        // Check for loops
-        const forLoops = code.match(/for\s+\w+\s+in\s+range\((\d+)\)/g)
-        if (forLoops) {
-            forLoops.forEach(loop => {
-                const iterations = parseInt(loop.match(/\d+/)![0])
-                if (iterations > 10) {
-                    timeEstimate += iterations * 0.5
-                }
-            })
+        let report = '=== CODE VALIDATION REPORT ===\n\n'
+
+        if (result.fixed) {
+            report += '🔧 AUTO-FIXES:\n'
+            result.fixes.forEach(f => report += `  ✓ ${f}\n`)
+            report += '\n'
         }
 
-        return Math.min(timeEstimate, 180) // Cap at 3 minutes
+        if (result.errors.length > 0) {
+            report += '❌ ERRORS:\n'
+            result.errors.forEach(e => report += `  • ${e}\n`)
+            report += '\n'
+        }
+
+        if (result.warnings.length > 0) {
+            report += '⚠️ WARNINGS:\n'
+            result.warnings.forEach(w => report += `  • ${w}\n`)
+            report += '\n'
+        }
+
+        report += `📊 COMPLEXITY: ${complexity.score}/10\n`
+        report += result.valid ? '✅ VALID\n' : '❌ INVALID\n'
+
+        return report
     }
 }

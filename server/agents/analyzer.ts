@@ -2,7 +2,6 @@
 import { EventEmitter } from 'events'
 import { NLPProcessor } from '../nlp/processor'
 import { DomainClassifier } from '../ml/classifier'
-import { AdvancedNLPProcessor } from '../nlp/advanced-processor'
 import { HierarchicalParser, ParsedGeometry } from '../nlp/hierarchical-parser'
 import { MedicalPatternGenerator } from '../generators/medical-patterns'
 import { LatticeGenerator } from '../generators/lattice-generator'
