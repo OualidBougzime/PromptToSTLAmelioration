@@ -57,6 +57,52 @@ export class CodeValidator {
             errors.push('Dangerous pattern: .sphere().faces() causes errors. Use .sphere().translate() instead')
         }
 
+        // 8. Vérifier usage correct de .loft()
+        if (code.includes('.loft()')) {
+            // Compter le nombre de .workplane() ou .circle() avant .loft()
+            const beforeLoft = code.substring(0, code.indexOf('.loft()'))
+            const workplaneCount = (beforeLoft.match(/\.workplane\(/g) || []).length
+            const circleCount = (beforeLoft.match(/\.circle\(/g) || []).length
+
+            if (workplaneCount < 2 && circleCount < 2) {
+                errors.push('CRITICAL: .loft() requires at least 2 sections. Add more .workplane().circle() calls before .loft()')
+            }
+        }
+
+        // 9. Détecter pattern dangereux : sections list
+        if (code.includes('sections = []') || code.includes('sections.append')) {
+            warnings.push('Detected manual section management. Use workplane chain instead: .circle().workplane(offset=z).circle().loft()')
+        }
+
+        // 10. Détecter tentative d'extrusion sur wire 3D
+        if (code.includes('.moveTo(') && code.includes('.extrude(')) {
+            const hasComplexPath = code.includes('math.cos') || code.includes('math.sin')
+            if (hasComplexPath) {
+                warnings.push('Complex 3D path detected. Ensure wire is planar before .extrude(). For stents, use individual struts instead.')
+            }
+        }
+
+        // 11. Détecter paramètres CadQuery obsolètes
+        const obsoleteParams = ['angleDegrees', 'angle=', 'centerOption']
+        obsoleteParams.forEach(param => {
+            if (code.includes(param)) {
+                errors.push(`CRITICAL: Parameter '${param}' is not supported in CadQuery 2.4. Use correct API.`)
+            }
+        })
+
+        // 12. Vérifier syntaxe .rotate()
+        if (code.includes('.rotate(')) {
+            const rotatePattern = /\.rotate\([^)]{0,20}\)/g
+            const rotates = code.match(rotatePattern) || []
+            rotates.forEach(rotate => {
+                // Correct: .rotate((0,0,0), (0,0,1), 45)
+                // Wrong: .rotate(angle=45)
+                if (rotate.includes('angle=')) {
+                    errors.push('CRITICAL: .rotate() syntax error. Use: .rotate((0,0,0), (0,0,1), 45)')
+                }
+            })
+        }
+
         return {
             valid: errors.length === 0,
             errors,

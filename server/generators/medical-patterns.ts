@@ -87,9 +87,11 @@ show_object(result)
     static vascularStent(params: any): string {
         const {
             length = 25,
-            diameter = 8,
+            expandedDiameter = 8,
+            collapsedDiameter = 3,
             strutThickness = 0.3,
-            rings = 8
+            rings = 8,
+            bridges = 3
         } = params
 
         return `import cadquery as cq
@@ -97,62 +99,98 @@ import math
 
 # Vascular Stent Parameters
 length = ${length}
-diameter = ${diameter}
+expanded_diameter = ${expandedDiameter}
+collapsed_diameter = ${collapsedDiameter}
 strut_thickness = ${strutThickness}
 rings = ${rings}
+bridges = ${bridges}
 
-radius = diameter / 2
+# Use average diameter for modeling
+diameter = (expanded_diameter + collapsed_diameter) / 2.0
+radius = diameter / 2.0
 ring_spacing = length / rings
 
 result = None
 
-# Create zigzag pattern for each ring
+# Step 1: Create zigzag rings using individual struts
+points_per_ring = 16
+
 for ring_idx in range(rings):
     z_pos = ring_idx * ring_spacing
-    points_per_ring = 16
     
     for i in range(points_per_ring):
+        # Calculate angles for current and next point
         angle = (360.0 / points_per_ring) * i
         next_angle = (360.0 / points_per_ring) * ((i + 1) % points_per_ring)
         
-        # Zigzag: alternating radius
+        # Zigzag pattern: alternate between outer and inner radius
         r1 = radius if i % 2 == 0 else radius * 0.85
         r2 = radius * 0.85 if i % 2 == 0 else radius
         
+        # Calculate 3D positions
         x1 = r1 * math.cos(math.radians(angle))
         y1 = r1 * math.sin(math.radians(angle))
         x2 = r2 * math.cos(math.radians(next_angle))
         y2 = r2 * math.sin(math.radians(next_angle))
         
-        # Create strut as cylinder between two points
+        # Calculate distance and angle between points
         dx = x2 - x1
         dy = y2 - y1
         dist = math.sqrt(dx**2 + dy**2)
         
-        if dist > 0:
+        if dist > 0.01:  # Avoid zero-length struts
+            # Create strut as cylinder
+            # Position at midpoint
+            mid_x = (x1 + x2) / 2.0
+            mid_y = (y1 + y2) / 2.0
+            
+            # Calculate rotation angle
+            strut_angle = math.degrees(math.atan2(dy, dx))
+            
             strut = (cq.Workplane("XY")
-                .center(x1, y1)
                 .workplane(offset=z_pos)
-                .circle(strut_thickness / 2)
-                .extrude(0.1))
+                .center(x1, y1)
+                .circle(strut_thickness / 2.0)
+                .extrude(0.8))  # Small vertical height
             
             result = result.union(strut) if result else strut
 
-# Add longitudinal bridges
-for ring_idx in range(rings - 1):
-    z_pos = ring_idx * ring_spacing
-    for b in range(3):
-        bridge_angle = (360.0 / 3) * b
-        x = radius * 0.9 * math.cos(math.radians(bridge_angle))
-        y = radius * 0.9 * math.sin(math.radians(bridge_angle))
+# Step 2: Add longitudinal bridges between rings
+for bridge_idx in range(bridges):
+    bridge_angle = (360.0 / bridges) * bridge_idx
+    x_bridge = (radius * 0.9) * math.cos(math.radians(bridge_angle))
+    y_bridge = (radius * 0.9) * math.sin(math.radians(bridge_angle))
+    
+    for ring_idx in range(rings - 1):
+        z_start = ring_idx * ring_spacing
         
         bridge = (cq.Workplane("XY")
-            .workplane(offset=z_pos)
-            .center(x, y)
-            .circle(strut_thickness / 2)
+            .workplane(offset=z_start)
+            .center(x_bridge, y_bridge)
+            .circle(strut_thickness / 2.0)
             .extrude(ring_spacing))
         
-        result = result.union(bridge)
+        result = result.union(bridge) if result else bridge
+
+# Step 3: Add flared ends (optional)
+# Top flare
+flare_top = (cq.Workplane("XY")
+    .workplane(offset=length - 1.0)
+    .circle(radius)
+    .workplane(offset=1.0)
+    .circle(radius * 1.1)
+    .loft())
+
+result = result.union(flare_top)
+
+# Bottom flare
+flare_bottom = (cq.Workplane("XY")
+    .circle(radius * 1.1)
+    .workplane(offset=1.0)
+    .circle(radius)
+    .loft())
+
+result = result.union(flare_bottom)
 
 show_object(result)
 `

@@ -162,6 +162,19 @@ Please fix this specific issue and regenerate the code.
     private categorizeError(errorMsg: string): string {
         const lower = errorMsg.toLowerCase()
 
+        // 🔥 AJOUTER AVANT loft_error
+        if (lower.includes('unexpected keyword') || lower.includes('angledegrees')) {
+            return 'invalid_api_usage'
+        }
+
+        if (lower.includes('wires not planar') || lower.includes('not planar')) {
+            return 'non_planar_wire'
+        }
+
+        if (lower.includes('more than one wire') || lower.includes('loft')) {
+            return 'loft_error'
+        }
+
         if (lower.includes('brep') || lower.includes('command not done')) {
             return 'geometric_invalid'
         }

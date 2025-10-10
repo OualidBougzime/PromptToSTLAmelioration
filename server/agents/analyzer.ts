@@ -89,15 +89,25 @@ export class AnalyzerAgent extends EventEmitter {
         }
 
         if (lower.includes('stent')) {
+            // 🔥 EXTRAIRE PARAMÈTRES DÉTAILLÉS
+            const expandedDia = this.extractNumber(prompt, ['expanded', 'diameter']) ||
+                dims.get('diameter') || 8
+            const collapsedDia = this.extractNumber(prompt, ['collapsed']) || 3
+            const strutThick = this.extractNumber(prompt, ['strut', 'thickness']) || 0.3
+            const ringCount = this.extractNumber(prompt, ['ring', 'rings']) || 8
+            const bridgeCount = this.extractNumber(prompt, ['bridge', 'bridges']) || 3
+
             return {
                 type: 'vascular-stent',
                 domain: 'medical',
                 generator: MedicalPatternGenerator.vascularStent,
                 params: {
                     length: dims.get('length') || 25,
-                    diameter: dims.get('diameter') || 8,
-                    strutThickness: 0.3,
-                    rings: 8
+                    expandedDiameter: expandedDia,
+                    collapsedDiameter: collapsedDia,
+                    strutThickness: strutThick,
+                    rings: ringCount,
+                    bridges: bridgeCount
                 }
             }
         }

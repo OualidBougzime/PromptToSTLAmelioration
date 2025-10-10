@@ -42,11 +42,16 @@ export class LLMAgent extends EventEmitter {
 
         console.log(`\n🧠 Generating code for: "${prompt}"`)
 
-        // Sélectionner prompt spécialisé avec contexte
         let systemPrompt = ''
         const lower = prompt.toLowerCase()
 
-        // 🔥 AMÉLIORATION: Ajouter contexte d'échecs précédents
+        // 🔥 VÉRIFIER ERREURS LOFT PRÉCÉDENTES
+        const hasLoftError = context?.previousErrors?.some(
+            (err: any) => err.type === 'loft_error' ||
+                err.message?.includes('loft') ||
+                err.message?.includes('More than one wire')
+        )
+
         let contextualHints = ''
         if (context?.previousErrors) {
             contextualHints = `\n\n⚠️ LEARN FROM PREVIOUS ERRORS:\n`
@@ -55,9 +60,16 @@ export class LLMAgent extends EventEmitter {
             })
         }
 
+        // SÉLECTION DU PROMPT
         if (lower.includes('drug') || lower.includes('stent') || lower.includes('implant')) {
-            console.log('🏥 Using MEDICAL prompt')
-            systemPrompt = SpecializedPrompts.getMedicalPrompt(prompt) + contextualHints
+            // 🔥 SI ERREUR LOFT DÉTECTÉE → UTILISER PROMPT SIMPLIFIÉ
+            if (hasLoftError && (lower.includes('ellips') || lower.includes('reservoir'))) {
+                console.log('🔄 Using SIMPLIFIED medical prompt due to loft errors')
+                systemPrompt = SpecializedPrompts.getSimplifiedMedicalPrompt(prompt)
+            } else {
+                console.log('🏥 Using MEDICAL prompt')
+                systemPrompt = SpecializedPrompts.getMedicalPrompt(prompt) + contextualHints
+            }
         }
         else if (lower.includes('lattice') || lower.includes('gyroid') || lower.includes('voronoi')) {
             console.log('🔲 Using LATTICE prompt')
@@ -87,6 +99,8 @@ export class LLMAgent extends EventEmitter {
             return this.generateFallback(prompt)
         }
     }
+
+
 
     private async generateWithOllama(systemPrompt: string): Promise<string> {
         // systemPrompt est déjà construit
@@ -374,6 +388,65 @@ FIXES:
 `
                 break
 
+            case 'invalid_api_usage':
+                specificGuidance = `
+ERROR TYPE: Invalid CadQuery API usage
+
+COMMON CAUSES:
+1. Using unsupported parameters (angleDegrees, etc.)
+2. Wrong method signature
+3. Obsolete API from old CadQuery version
+
+❌ COMMON MISTAKES:
+- .workplane(angleDegrees=45)  # NOT SUPPORTED
+- .rotate(angle=30)  # Wrong parameter name
+- Old API methods
+
+✅ CORRECT USAGE:
+- .workplane(offset=10.0)  # Simple offset
+- .rotate((0,0,0), (0,0,1), 30)  # Full rotate syntax
+- .center(x, y)  # Position on workplane
+
+FOR STENTS - ULTRA SIMPLE PATTERN:
+\`\`\`python
+import cadquery as cq
+import math
+
+length = 25.0
+diameter = 8.0
+strut_thickness = 0.3
+rings = 8
+
+radius = diameter / 2.0
+ring_spacing = length / rings
+result = None
+
+# Simple vertical struts in ring pattern
+for ring_idx in range(rings):
+    z = ring_idx * ring_spacing
+    
+    for i in range(12):  # 12 points per ring
+        angle = math.radians((360.0 / 12) * i)
+        x = radius * math.cos(angle)
+        y = radius * math.sin(angle)
+        
+        # Single vertical strut
+        strut = (cq.Workplane("XY")
+            .workplane(offset=z)
+            .center(x, y)
+            .circle(strut_thickness / 2.0)
+            .extrude(ring_spacing * 0.5))
+        
+        result = result.union(strut) if result else strut
+
+show_object(result)
+\`\`\`
+
+KEY: Keep it SIMPLE. No complex API calls.
+`
+                break
+
+
             case 'unclosed_wire':
                 specificGuidance = `
 ERROR TYPE: Wire is not closed
@@ -395,6 +468,78 @@ Example: For 5mm wall, use .fillet(2.0) maximum
 `
                 break
 
+            case 'non_planar_wire':
+                specificGuidance = `
+ERROR TYPE: Non-planar wires - Cannot build face from 3D wires
+
+CAUSE: Trying to create a face from wires that are not in the same plane
+COMMON IN: Stents, helical patterns, 3D curves
+
+❌ WRONG APPROACH:
+- Creating 3D wire path (zigzag around cylinder)
+- Trying .extrude() on non-planar wire
+- Using .loft() with 3D paths
+
+✅ CORRECT APPROACH FOR STENTS:
+Use individual struts (small cylinders) method:
+
+\`\`\`python
+import cadquery as cq
+import math
+
+# Parameters
+length = 25.0
+diameter = 8.0
+strut_thickness = 0.3
+rings = 8
+
+radius = diameter / 2.0
+ring_spacing = length / rings
+result = None
+
+# Create zigzag rings using individual struts
+points_per_ring = 16
+
+for ring_idx in range(rings):
+    z_pos = ring_idx * ring_spacing
+    
+    for i in range(points_per_ring):
+        angle = (360.0 / points_per_ring) * i
+        next_angle = (360.0 / points_per_ring) * ((i + 1) % points_per_ring)
+        
+        # Zigzag: alternating radius
+        r1 = radius if i % 2 == 0 else radius * 0.85
+        r2 = radius * 0.85 if i % 2 == 0 else radius
+        
+        x1 = r1 * math.cos(math.radians(angle))
+        y1 = r1 * math.sin(math.radians(angle))
+        x2 = r2 * math.cos(math.radians(next_angle))
+        y2 = r2 * math.sin(math.radians(next_angle))
+        
+        # Create strut as small cylinder between points
+        dx = x2 - x1
+        dy = y2 - y1
+        dz = 0.1
+        
+        strut = (cq.Workplane("XY")
+            .center(x1, y1)
+            .workplane(offset=z_pos)
+            .circle(strut_thickness / 2.0)
+            .extrude(0.5))  # Small height
+        
+        result = result.union(strut) if result else strut
+
+show_object(result)
+\`\`\`
+
+KEY POINTS:
+1. Build stent from individual struts (small cylinders)
+2. Calculate 3D positions using trigonometry
+3. Use .union() to combine struts
+4. NO .extrude() on 3D wires!
+`
+                break
+
             case 'boolean_operation':
                 specificGuidance = `
 ERROR TYPE: Boolean operation (union/cut) failed
@@ -404,6 +549,29 @@ FIXES:
 2. Use .fuse() instead of .union()
 3. Ensure shapes actually overlap/intersect
 4. Check that all dimensions are positive floats
+`
+                break
+
+            case 'loft_error':
+                specificGuidance = `
+ERROR TYPE: Loft operation failed
+
+CAUSE: .loft() requires at least 2 sections/profiles
+FIX: Use workplane chain method
+
+CORRECT PATTERN:
+result = (cq.Workplane("XY")
+    .circle(10.0)           # Section 1
+    .workplane(offset=20.0)
+    .circle(8.0)            # Section 2
+    .workplane(offset=20.0)
+    .circle(5.0)            # Section 3
+    .loft())                # Now loft works!
+
+NEVER DO THIS:
+sections = []
+sections.append(...)  # ❌ WRONG
+result = sections[0].loft(...)  # ❌ WRONG SYNTAX
 `
                 break
 

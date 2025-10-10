@@ -69,31 +69,25 @@ export class EngineerAgent extends EventEmitter {
     }
 
     private estimateTimeout(prompt: string): number {
-        let timeout = 60 // Base: 1 minute
+        let timeout = 60
 
         const lower = prompt.toLowerCase()
 
-        // Lattice structures need much more time
-        if (lower.includes('lattice') || lower.includes('gyroid') ||
-            lower.includes('voronoi') || lower.includes('scaffold')) {
+        // Formes médicales complexes
+        if (lower.includes('ellips') || lower.includes('implant') || lower.includes('reservoir')) {
+            timeout += 30  // +30s pour formes complexes
+        }
+
+        // Lattice
+        if (lower.includes('lattice') || lower.includes('gyroid')) {
             timeout += 60
         }
 
-        // Large dimensions suggest complexity
-        const numbers = prompt.match(/\d+/g)
-        if (numbers) {
-            const maxNumber = Math.max(...numbers.map(Number))
-            if (maxNumber > 100) {
-                timeout += 30
-            }
-        }
-
-        // Multiple features add complexity
-        const featureWords = ['hole', 'fillet', 'chamfer', 'array', 'pattern', 'union', 'cut']
-        const featureCount = featureWords.filter(w => lower.includes(w)).length
+        // Multiple features
+        const features = ['chamber', 'membrane', 'tab', 'hole', 'fillet']
+        const featureCount = features.filter(f => lower.includes(f)).length
         timeout += featureCount * 10
 
-        // Cap at 3 minutes
         return Math.min(timeout, 180)
     }
 
