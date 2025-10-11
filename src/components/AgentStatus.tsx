@@ -1,4 +1,4 @@
-// src/components/AgentStatus.tsx
+﻿// src/components/AgentStatus.tsx
 import React from 'react'
 import { motion } from 'framer-motion'
 import { Brain, Palette, Settings, Zap, CheckCircle } from 'lucide-react'
@@ -13,6 +13,18 @@ interface Agent {
 
 interface AgentStatusProps {
     agents: Agent[]
+}
+
+const getIcon = (agent: string) => {
+    const icons = {
+        'analyzer': Brain,
+        'retrieval': Database,  // ← NOUVEAU
+        'planning': Map,        // ← NOUVEAU
+        'designer': Palette,
+        'engineer': Settings,
+        'validator': CheckCircle
+    }
+    return icons[agent] || Brain
 }
 
 export function AgentStatus({ agents }: AgentStatusProps) {

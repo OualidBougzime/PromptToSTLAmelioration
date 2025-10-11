@@ -1,11 +1,10 @@
-﻿// server/main.ts
+﻿// server/main.ts - VERSION 2.0 COMPLÈTE
 import 'dotenv/config'
-
 import express from 'express'
 import cors from 'cors'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
-import { AgentOrchestrator } from './agents/orchestrator'
+import { AgentOrchestratorV2 } from './agents/orchestrator'
 import axios from 'axios'
 
 console.log('\n' + '='.repeat(60))
@@ -13,6 +12,7 @@ console.log('🔧 ENVIRONMENT VARIABLES CHECK')
 console.log('='.repeat(60))
 console.log(`OLLAMA_URL: ${process.env.OLLAMA_URL || '❌ NOT SET (using default)'}`)
 console.log(`OLLAMA_MODEL: ${process.env.OLLAMA_MODEL || '❌ NOT SET (using default)'}`)
+console.log(`QDRANT_URL: ${process.env.QDRANT_URL || '❌ NOT SET (using default)'}`)
 console.log(`PORT: ${process.env.PORT || '❌ NOT SET (using default)'}`)
 console.log('='.repeat(60) + '\n')
 
@@ -28,16 +28,48 @@ const io = new Server(httpServer, {
 app.use(cors())
 app.use(express.json({ limit: '50mb' }))
 
-const orchestrator = new AgentOrchestrator()
-
+const orchestrator = new AgentOrchestratorV2()
 const sessions = new Map<string, any>()
 
+// ============================================
+// INITIALISATION
+// ============================================
+async function initializeServer() {
+    console.log('🚀 Initializing CADAM-X v2.0...')
+
+    try {
+        await orchestrator.initialize()
+        console.log('✅ Orchestrator initialized')
+    } catch (error) {
+        console.warn('⚠️ Orchestrator initialization failed (RAG disabled):', error.message)
+        console.log('   System will run without RAG features')
+    }
+
+    const PORT = process.env.PORT || 8787
+    httpServer.listen(PORT, () => {
+        console.log(`
+╔══════════════════════════════════════════════╗
+║       CADAM-X v2.0 - RAG + Multi-Agent       ║
+╠══════════════════════════════════════════════╣
+║  🚀 Server:     http://localhost:${PORT}       ║
+║  🧠 LLM:        Ollama (${process.env.OLLAMA_MODEL || 'qwen2.5-coder:14b'})
+║  🔄 WebSocket:  Ready                        ║
+║  📚 RAG:        ${process.env.QDRANT_URL ? 'Active' : 'Disabled'}                    ║
+╚══════════════════════════════════════════════╝
+        `)
+    })
+}
+
+// ============================================
+// WEBSOCKET EVENTS
+// ============================================
 io.on('connection', (socket) => {
     console.log('🔌 Client connected:', socket.id)
 
     sessions.set(socket.id, {
         id: socket.id,
-        history: []
+        history: [],
+        timestamp: Date.now()
     })
 
     socket.on('generate', async (data) => {
@@ -49,8 +81,15 @@ io.on('connection', (socket) => {
 
             const result = await orchestrator.process(prompt, {
                 ...options,
-                onAgentUpdate: (agent, status) => {
+                session,
+                onAgentUpdate: (agent: string, status: any) => {
                     socket.emit('agent:update', { agent, status })
+                },
+                onProgress: (progress: any) => {
+                    socket.emit('generation:progress', progress)
+                },
+                onPartialResult: (partial: any) => {
+                    socket.emit('generation:partial', partial)
                 }
             })
 
@@ -66,19 +105,51 @@ io.on('connection', (socket) => {
         }
     })
 
+    socket.on('modify', async (data) => {
+        const { modelId, modification } = data
+
+        try {
+            const result = await orchestrator.modify(modelId, modification)
+            socket.emit('modification:complete', result)
+        } catch (error: any) {
+            socket.emit('modification:error', { error: error.message })
+        }
+    })
+
     socket.on('disconnect', () => {
         console.log('🔌 Client disconnected:', socket.id)
         sessions.delete(socket.id)
     })
 })
 
+// ============================================
+// HTTP ENDPOINTS
+// ============================================
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        timestamp: Date.now(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        version: '2.0.0'
+    })
+})
+
 app.post('/api/generate', async (req, res) => {
     try {
         const { prompt } = req.body
+
+        if (!prompt) {
+            return res.status(400).json({ error: 'Prompt is required' })
+        }
+
         const result = await orchestrator.process(prompt)
         res.json(result)
     } catch (error: any) {
-        res.status(500).json({ error: error.message })
+        res.status(500).json({
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        })
     }
 })
 
@@ -115,8 +186,6 @@ app.post('/api/export-stl', async (req, res) => {
     }
 })
 
-// 🔥 NOUVEAUX ENDPOINTS DE MONITORING
-
 app.get('/api/metrics', (req, res) => {
     try {
         const metrics = orchestrator.getMetrics()
@@ -135,24 +204,30 @@ app.get('/api/metrics/failures', (req, res) => {
     }
 })
 
-app.get('/api/health', (req, res) => {
-    res.json({
-        status: 'healthy',
-        timestamp: Date.now(),
-        uptime: process.uptime(),
-        memory: process.memoryUsage()
+// ============================================
+// ERROR HANDLING
+// ============================================
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error('❌ Server error:', err)
+    res.status(500).json({
+        error: 'Internal server error',
+        message: err.message
     })
 })
 
-const PORT = process.env.PORT || 8787
-httpServer.listen(PORT, () => {
-    console.log(`
-╔══════════════════════════════════════════════╗
-║       CADAM-X v3.0 - LLM-Powered             ║
-╠══════════════════════════════════════════════╣
-║  🚀 Server:     http://localhost:${PORT}       ║
-║  🧠 LLM:        Ollama                       ║
-║  🔄 WebSocket:  Ready                        ║
-╚══════════════════════════════════════════════╝
-  `)
+// ============================================
+// START SERVER
+// ============================================
+initializeServer().catch((error) => {
+    console.error('❌ Failed to start server:', error)
+    process.exit(1)
+})
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+    console.log('\n🛑 Shutting down gracefully...')
+    httpServer.close(() => {
+        console.log('✅ Server closed')
+        process.exit(0)
+    })
 })

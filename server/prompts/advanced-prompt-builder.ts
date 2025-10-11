@@ -511,12 +511,20 @@ CRITICAL:
     /**
      * Prompt principal (tentative 1)
      */
-    private static buildPrimaryPrompt(prompt: string, category: string, errors: string[]): string {
+    private static buildPrimaryPrompt(
+        prompt: string,
+        category: string,
+        errors: string[],
+        ragExamples: any[] = []  // ← NOUVEAU paramètre
+    ): string {
         const errorContext = errors.length > 0
             ? `\n\n⚠️ PREVIOUS ERRORS TO AVOID:\n${errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n`
             : ''
 
-        const examples = this.getExamplesForCategory(category)
+        // 🔥 UTILISER RAG examples si disponibles
+        const examples = ragExamples.length > 0
+            ? ragExamples.map(ex => `\n--- RAG Example (${(ex.score * 100).toFixed(0)}% match) ---\n${ex.code}`).join('\n')
+            : this.getExamplesForCategory(category).substring(0, 1500)
 
         return `You are an EXPERT CadQuery programmer.
 
@@ -526,8 +534,8 @@ ${errorContext}
 
 🎯 USER REQUEST: "${prompt}"
 
-📚 USE THIS WORKING EXAMPLE:
-${examples.substring(0, 1500)}  // ✅ Limiter à 1500 chars
+📚 RELEVANT EXAMPLES:
+${examples}
 
 📋 INSTRUCTIONS:
 1. Copy the example structure

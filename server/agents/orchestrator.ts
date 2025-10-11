@@ -1,159 +1,261 @@
-﻿// server/agents/orchestrator.ts
+﻿// server/agents/orchestrator.ts - VERSION 2.0 CORRIGÉE
 import { EventEmitter } from 'events'
 import { LLMAgent } from './llm-agent'
 import { EngineerAgent } from './engineer'
-import { ValidatorAgent } from './optimizer'
+import { AnalyzerAgent } from './analyzer'
+import { RetrievalAgent } from '../rag/retrieval-agent'
+import { PlanningAgent } from './planning-agent'
+import { ValidationAgentV2 } from './validation-agent-v2'
 import { MetricsCollector } from '../monitoring/metrics'
-import { CadQuerySafePatterns } from '../prompts/cadquery-safe-patterns'
 
-export class AgentOrchestrator extends EventEmitter {
+export class AgentOrchestratorV2 extends EventEmitter {
+    private analyzer: AnalyzerAgent
+    private retrieval: RetrievalAgent
+    private planning: PlanningAgent
     private llm: LLMAgent
     private engineer: EngineerAgent
-    private validator: ValidatorAgent
+    private validator: ValidationAgentV2
     private metrics: MetricsCollector
 
     constructor() {
         super()
+        this.analyzer = new AnalyzerAgent()
+        this.retrieval = new RetrievalAgent()
+        this.planning = new PlanningAgent()
         this.llm = new LLMAgent()
         this.engineer = new EngineerAgent()
-        this.validator = new ValidatorAgent()
+        this.validator = new ValidationAgentV2()
         this.metrics = new MetricsCollector()
 
-        this.llm.on('state', (state) => {
-            this.emit('agent:update', 'llm', state)
-        })
+        // Forward events
+        this.analyzer.on('state', (state) => this.emit('agent:update', 'analyzer', state))
+        this.retrieval.on('state', (state) => this.emit('agent:update', 'retrieval', state))
+        this.planning.on('state', (state) => this.emit('agent:update', 'planning', state))
+        this.validator.on('state', (state) => this.emit('agent:update', 'validator', state))
+    }
+
+    async initialize() {
+        await this.retrieval.initialize()
+        console.log('✅ Orchestrator V2 initialized')
     }
 
     async process(prompt: string, options: any = {}): Promise<any> {
-        console.log(`\n🎯 Processing: "${prompt}"`)
+        console.log(`\n${'='.repeat(60)}`)
+        console.log(`🎯 PROCESSING: "${prompt}"`)
+        console.log('='.repeat(60))
 
         const startTime = Date.now()
-        const maxAttempts = 3
-        const strategies = ['enhanced', 'simplified', 'minimal']
 
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            const strategy = strategies[attempt]
-            console.log(`\n🔄 Attempt ${attempt + 1}/${maxAttempts} - ${strategy}`)
+        try {
+            // === ÉTAPE 1 : ANALYZE ===
+            console.log('\n📊 Step 1: ANALYZE')
+            const analysis = await this.analyzer.analyze(prompt)
+
+            console.log(`  ✓ Domain: ${analysis.domain.category}`)
+            console.log(`  ✓ Complexity: ${analysis.complexity.score}/10`)
+            console.log(`  ✓ Sub-tasks: ${analysis.decomposition?.subTasks.length || 0}`)
+
+            // === ÉTAPE 2 : RETRIEVE ===
+            console.log('\n🔍 Step 2: RETRIEVE EXAMPLES')
+            const examples = await this.retrieval.retrieveExamples(prompt, analysis)
+
+            console.log(`  ✓ Retrieved: ${examples.length} examples`)
+            examples.forEach((ex, i) => {
+                console.log(`    ${i + 1}. ${ex.prompt} (${(ex.score * 100).toFixed(0)}% match)`)
+            })
+
+            // === ÉTAPE 3 : PLAN ===
+            console.log('\n📋 Step 3: GENERATE EXECUTION PLAN')
+            const plan = await this.planning.generateExecutionPlan(analysis, examples)
+
+            console.log(`  ✓ Strategy: ${plan.strategy}`)
+            console.log(`  ✓ Phases: ${plan.phases.length}`)
+            console.log(`  ✓ Estimated time: ${plan.estimatedTime}s`)
+
+            // === ÉTAPE 4 : GENERATE WITH REFINEMENT LOOP ===
+            console.log('\n🔄 Step 4: GENERATE CODE (with refinement loop)')
+            const result = await this.generateWithRefinementLoop(
+                prompt,
+                analysis,
+                plan,
+                examples
+            )
+
+            // === ÉTAPE 5 : FINAL VALIDATION ===
+            console.log('\n✅ Step 5: FINAL VALIDATION')
+            const finalValidation = await this.validator.validateMultiLayer(
+                result.code,
+                plan,
+                analysis.decomposition.constraints
+            )
+
+            result.validation = finalValidation
+
+            // === METRICS ===
+            const duration = Date.now() - startTime
+            this.metrics.logGeneration({
+                prompt,
+                timestamp: Date.now(),
+                duration,
+                attempts: result.attempts,
+                success: finalValidation.passed,
+                complexity: analysis.complexity.score
+            })
+
+            // === LEARN FROM SUCCESS ===
+            if (finalValidation.passed && finalValidation.overallScore >= 80) {
+                await this.retrieval.addSuccessfulGeneration(prompt, result.code, analysis)
+            }
+
+            console.log(`\n${'='.repeat(60)}`)
+            console.log(`✅ SUCCESS - Score: ${finalValidation.overallScore}/100 in ${duration}ms`)
+            console.log('='.repeat(60) + '\n') // ✅ CORRIGÉ ICI
+
+            return {
+                prompt,
+                timestamp: Date.now(),
+                duration,
+                attempts: result.attempts,
+                code: { language: 'cadquery', cadquery: result.code, python: result.code },
+                model: { representations: { threejs: result.mesh } },
+                validation: finalValidation,
+                analysis,
+                plan
+            }
+
+        } catch (error: any) {
+            console.error('\n❌ ORCHESTRATOR ERROR:', error.message)
+            return this.buildFallback(prompt, error)
+        }
+    }
+
+    /**
+     * 🔥 CŒUR DU SYSTÈME : Refinement Loop Intelligent
+     */
+    private async generateWithRefinementLoop(
+        prompt: string,
+        analysis: any,
+        plan: any,
+        examples: any[]
+    ): Promise<any> {
+        const maxIterations = 5
+        let attempt = 0
+        let lastError: any = null
+        let bestResult: any = null
+        let bestScore = 0
+
+        while (attempt < maxIterations) {
+            attempt++
+            console.log(`\n  🔄 Refinement Iteration ${attempt}/${maxIterations}`)
 
             try {
-                // 🔥 FIX 1: Déclarer et initialiser code AVANT utilisation
-                let code: string
+                // 1. Generate code
+                console.log(`    → Generating code...`)
+                const code = await this.llm.generateWithRAG(
+                    prompt,
+                    plan,
+                    examples,
+                    { attempt, previousErrors: lastError ? [lastError] : [] }
+                )
 
-                if (attempt === 0 && this.isSimplePrompt(prompt)) {
-                    code = this.getProvenPattern(prompt)
-                    console.log('📝 Using proven pattern')
-                } else {
-                    code = await this.llm.generateCADCode(prompt, {
-                        strategy,
-                        attempt: attempt + 1
-                    })
-                    console.log('📝 Generated code from LLM')
+                // 2. Quick validation
+                console.log(`    → Validating...`)
+                const validation = await this.validator.validateMultiLayer(
+                    code,
+                    plan,
+                    analysis.decomposition.constraints
+                )
+
+                // 3. Check if good enough
+                if (validation.passed && validation.overallScore >= 80) {
+                    console.log(`    ✅ SUCCESS - Score: ${validation.overallScore}/100`)
+
+                    return {
+                        code,
+                        mesh: validation.layers.execution.mesh,
+                        validation,
+                        attempts: attempt
+                    }
                 }
 
-                // 🔥 FIX 2: Vérifier que code existe
-                if (!code || code.trim().length === 0) {
-                    throw new Error('LLM returned empty code')
+                // 4. Track best result
+                if (validation.overallScore > bestScore) {
+                    bestScore = validation.overallScore
+                    bestResult = {
+                        code,
+                        mesh: validation.layers.execution?.mesh,
+                        validation,
+                        attempts: attempt
+                    }
+                    console.log(`    📊 New best score: ${bestScore}/100`)
                 }
 
-                console.log('📊 Code length:', code.length)
-                console.log('📝 Code preview:', code.substring(0, 150))
-
-                // 🔥 FIX 3: Valider APRÈS avoir défini code
-                const validation = await this.engineer.validateCode(code)
-                console.log('🔍 Validation result:', validation)
-
-                if (!validation.syntax) {
-                    console.log('❌ Syntax errors:', validation.errors)
-                    throw new Error('Syntax invalid')
+                // 5. Prepare for next iteration
+                lastError = {
+                    attempt,
+                    score: validation.overallScore,
+                    errors: validation.errors,
+                    warnings: validation.warnings
                 }
 
-                // Exécuter
-                const mesh = await this.engineer.executeCode(code)
+                // 6. If execution failed, try to fix with LLM feedback
+                if (!validation.layers.execution?.success) {
+                    console.log(`    🔧 Attempting repair with LLM feedback...`)
 
-                // Vérifier succès
-                if (mesh && mesh.vertices && mesh.vertices.length >= 100) {
-                    console.log('✅ SUCCESS')
-                    return this.buildSuccess(prompt, code, mesh, Date.now() - startTime, attempt + 1)
-                }
+                    const repairedCode = await this.llm.improveCodeWithFeedback(
+                        code,
+                        validation.errors.join('; '),
+                        'execution_error'
+                    )
 
-                // Si échec mais pas d'erreur critique, essayer de corriger
-                if (attempt < 2 && mesh?.error) {
-                    const errorType = this.categorizeError(mesh.error)
-                    const fixedCode = await this.llm.improveCodeWithFeedback(code, mesh.error, errorType)
-                    const fixedMesh = await this.engineer.executeCode(fixedCode)
+                    // Quick revalidation
+                    const revalidation = await this.validator.validateMultiLayer(
+                        repairedCode,
+                        plan,
+                        analysis.decomposition.constraints
+                    )
 
-                    if (fixedMesh && fixedMesh.vertices && fixedMesh.vertices.length >= 100) {
-                        console.log('✅ Fix worked!')
-                        return this.buildSuccess(prompt, fixedCode, fixedMesh, Date.now() - startTime, attempt + 1)
+                    if (revalidation.passed) {
+                        console.log(`    ✅ REPAIR SUCCESSFUL`)
+                        return {
+                            code: repairedCode,
+                            mesh: revalidation.layers.execution.mesh,
+                            validation: revalidation,
+                            attempts: attempt
+                        }
                     }
                 }
 
             } catch (error: any) {
-                console.log(`❌ Attempt ${attempt + 1} failed:`, error.message)
-                // Continue to next attempt
+                console.log(`    ❌ Iteration ${attempt} failed: ${error.message}`)
+                lastError = error.message
             }
         }
 
-        console.log('❌ All attempts failed')
-        return this.buildFallback(prompt)
-    }
-
-    private isSimplePrompt(prompt: string): boolean {
-        return prompt.split(' ').length <= 10
-    }
-
-    private getProvenPattern(prompt: string): string {
-        const lower = prompt.toLowerCase()
-
-        if (lower.includes('stent')) {
-            return CadQuerySafePatterns.PROVEN_PATTERNS.stent_simple
-        }
-        if (lower.includes('box')) {
-            return CadQuerySafePatterns.PROVEN_PATTERNS.box_simple
+        // Retourner le meilleur résultat obtenu
+        if (bestResult) {
+            console.log(`\n  ⚠️ Max iterations reached. Returning best: ${bestScore}/100`)
+            return bestResult
         }
 
-        return CadQuerySafePatterns.PROVEN_PATTERNS.cylinder_simple
+        throw new Error('All refinement iterations failed')
     }
 
-    private categorizeError(error: string): string {
-        const lower = error.toLowerCase()
-        if (lower.includes('angledegrees')) return 'invalid_api'
-        if (lower.includes('loft')) return 'loft_error'
-        if (lower.includes('planar')) return 'non_planar'
-        return 'general'
-    }
-
-    private buildSuccess(prompt: string, code: string, mesh: any, duration: number, attempts: number): any {
-        this.metrics.logGeneration({
-            prompt,
-            timestamp: Date.now(),
-            duration,
-            attempts,
-            success: true,
-            complexity: 5
-        })
-
+    private buildFallback(prompt: string, error: any): any {
         return {
             prompt,
             timestamp: Date.now(),
-            duration,
-            attempts,
-            code: { language: 'cadquery', cadquery: code, python: code },
-            model: { representations: { threejs: mesh } },
-            validation: { syntax: { valid: true, errors: [], warnings: [] }, geometry: { valid: true }, score: 100 }
-        }
-    }
-
-    private buildFallback(prompt: string): any {
-        return {
-            prompt,
-            code: { language: 'cadquery', cadquery: CadQuerySafePatterns.PROVEN_PATTERNS.box_simple },
+            code: { language: 'cadquery', cadquery: '# Generation failed' },
             model: { representations: { threejs: { vertices: [], faces: [], normals: [] } } },
-            validation: { syntax: { valid: true }, score: 50 }
+            validation: { passed: false, overallScore: 0, errors: [error.message] },
+            error: error.message
         }
     }
 
     getMetrics() { return this.metrics.getStats() }
     getRecentFailures() { return this.metrics.getRecentFailures() }
-    async modify() { return { success: true } }
+
+    async modify(): Promise<any> {
+        return { success: true }
+    }
 }

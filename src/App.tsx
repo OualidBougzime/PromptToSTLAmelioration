@@ -1,4 +1,4 @@
-﻿// src/App.tsx
+﻿// src/App.tsx - VERSION CORRIGÉE
 import React, { useState, useEffect } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { PromptInput } from './components/PromptInput'
@@ -159,9 +159,9 @@ export default function App() {
                         <Box className="w-8 h-8 text-blue-500" />
                         <div>
                             <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-600 bg-clip-text text-transparent">
-                                CADAM-X
+                                CADAM-X v2.0
                             </h1>
-                            <p className="text-xs text-gray-400">Multi-Agent CAD System</p>
+                            <p className="text-xs text-gray-400">RAG-Powered Multi-Agent CAD System</p>
                         </div>
                     </div>
 
@@ -180,6 +180,7 @@ export default function App() {
             <div className="container mx-auto px-4 py-6">
                 <div className="grid grid-cols-12 gap-6">
 
+                    {/* COL 1: AGENTS STATUS */}
                     <div className="col-span-3">
                         <div className="bg-gray-900/50 backdrop-blur-xl rounded-xl p-4 border border-gray-800">
                             <h2 className="text-lg font-semibold mb-4 flex items-center">
@@ -188,8 +189,51 @@ export default function App() {
                             </h2>
                             <AgentStatus agents={agents} />
                         </div>
+
+                        {/* EXECUTION PLAN (NEW) */}
+                        {currentModel?.plan && (
+                            <div className="bg-gray-900/50 backdrop-blur-xl rounded-xl border border-gray-800 p-4 mt-4">
+                                <h3 className="text-lg font-semibold mb-2 flex items-center">
+                                    <Settings className="w-4 h-4 mr-2 text-blue-400" />
+                                    Execution Plan
+                                </h3>
+
+                                <div className="space-y-2">
+                                    <div className="text-sm text-gray-400">
+                                        Strategy: <span className="text-blue-400 font-semibold">{currentModel.plan.strategy}</span>
+                                    </div>
+
+                                    <div className="text-sm text-gray-400">
+                                        Phases: <span className="text-white font-semibold">{currentModel.plan.phases.length}</span>
+                                    </div>
+
+                                    <div className="text-sm text-gray-400">
+                                        Estimated Time: <span className="text-white font-semibold">{currentModel.plan.estimatedTime}s</span>
+                                    </div>
+
+                                    {currentModel.plan.examples && currentModel.plan.examples.length > 0 && (
+                                        <div className="mt-4 pt-4 border-t border-gray-700">
+                                            <h4 className="text-sm font-semibold mb-2 text-purple-400">RAG Examples Used:</h4>
+                                            <div className="space-y-1">
+                                                {currentModel.plan.examples.map((ex: any, i: number) => (
+                                                    <div key={i} className="text-xs text-gray-400 truncate bg-gray-800/50 p-2 rounded">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="truncate flex-1">• {ex.prompt}</span>
+                                                            <span className="text-purple-400 ml-2">
+                                                                {(ex.score * 100).toFixed(0)}%
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
+                    {/* COL 2: 3D VIEWER + PROMPT */}
                     <div className="col-span-6 space-y-6">
                         <div className="bg-gray-900/50 backdrop-blur-xl rounded-xl border border-gray-800 h-[500px] overflow-hidden">
                             {currentModel ? (
@@ -214,6 +258,7 @@ export default function App() {
                         />
                     </div>
 
+                    {/* COL 3: CODE/PARAMS */}
                     <div className="col-span-3">
                         <div className="bg-gray-900/50 backdrop-blur-xl rounded-xl border border-gray-800 p-4">
                             <div className="flex space-x-2 mb-4 border-b border-gray-800">
